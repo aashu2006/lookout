@@ -10,6 +10,10 @@ const envSchema = z.object({
     .default("info"),
   LOG_PRETTY: z.coerce.boolean().default(false),
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
+  JWT_SECRET: z.string().min(32, "JWT_SECRET must be at least 32 characters"),
+  JWT_EXPIRES_IN: z.string().default("7d"),
+  ADMIN_EMAILS: z.string().optional(),
+  CORS_ORIGIN: z.string().default("http://localhost:5173"),
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -25,6 +29,13 @@ if (!parsed.success) {
 
 const env = parsed.data;
 
+const adminEmails = new Set(
+  (env.ADMIN_EMAILS ?? "")
+    .split(",")
+    .map((email) => email.trim().toLowerCase())
+    .filter((email) => email.length > 0),
+);
+
 export const config = {
   port: env.PORT,
   databaseUrl: env.DATABASE_URL,
@@ -33,6 +44,10 @@ export const config = {
   logPretty: env.LOG_PRETTY,
   nodeEnv: env.NODE_ENV,
   isDev: env.NODE_ENV === "development",
+  jwtSecret: env.JWT_SECRET,
+  jwtExpiresIn: env.JWT_EXPIRES_IN,
+  adminEmails,
+  corsOrigin: env.CORS_ORIGIN,
 } as const;
 
 export type Config = typeof config;

@@ -1,0 +1,90 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  USER
+  ADMIN
+}
+
+enum CheckStatus {
+  UP
+  DOWN
+}
+
+enum ErrorType {
+  TIMEOUT
+  DNS_FAIL
+  CONN_REFUSED
+  INVALID_URL
+  HTTP_ERROR
+  TLS_ERROR
+  UNKNOWN
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  role         Role     @default(USER)
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  urls Url[]
+
+  @@map("users")
+}
+
+model Url {
+  id              String   @id @default(uuid())
+  userId          String   @map("user_id")
+  url             String
+  intervalSeconds Int      @default(300) @map("interval_seconds")
+  isActive        Boolean  @default(true) @map("is_active")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  checks      Check[]
+  hourlyStats UrlStatsHourly[]
+
+  @@unique([userId, url])
+  @@index([userId])
+  @@index([isActive])
+  @@map("urls")
+}
+
+model Check {
+  id           BigInt      @id @default(autoincrement())
+  urlId        String      @map("url_id")
+  status       CheckStatus
+  statusCode   Int?        @map("status_code")
+  responseMs   Int?        @map("response_ms")
+  errorType    ErrorType?  @map("error_type")
+  errorMessage String?     @map("error_message")
+  checkedAt    DateTime    @default(now()) @map("checked_at")
+
+  url Url @relation(fields: [urlId], references: [id], onDelete: Cascade)
+
+  @@index([urlId, checkedAt(sort: Desc)])
+  @@index([checkedAt])
+  @@map("checks")
+}
+
+model UrlStatsHourly {
+  urlId       String   @map("url_id")
+  hour        DateTime
+  totalChecks Int      @map("total_checks")
+  failures    Int
+  avgMs       Float?   @map("avg_ms")
+  p95Ms       Int?     @map("p95_ms")
+
+  url Url @relation(fields: [urlId], references: [id], onDelete: Cascade)
+
+  @@id([urlId, hour])
+  @@index([hour])
+  @@map("url_stats_hourly")
+}

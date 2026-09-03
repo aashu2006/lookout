@@ -1,5 +1,6 @@
 import express, { type NextFunction, type Request, type Response } from "express";
 import { pinoHttp } from "pino-http";
+import { prisma } from "./db.js";
 import { logger } from "./logger.js";
 
 export const app = express();
@@ -7,11 +8,20 @@ export const app = express();
 app.use(express.json());
 app.use(pinoHttp({ logger }));
 
-app.get("/health", (_req: Request, res: Response) => {
-  res.json({
+app.get("/health", async (req: Request, res: Response) => {
+  let db: "ok" | "error" = "ok";
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+  } catch (err) {
+    db = "error";
+    req.log.error({ err }, "health check: db unreachable");
+  }
+
+  res.status(db === "ok" ? 200 : 503).json({
     status: "ok",
     uptime: process.uptime(),
     timestamp: new Date().toISOString(),
+    db,
   });
 });
 

@@ -6,7 +6,7 @@ import { Queue, Worker } from "bullmq";
 import "./bigintJson.js";
 import { config } from "./config.js";
 import { prisma } from "./db.js";
-import { logger } from "./logger.js";
+import { logger, runWithLogger } from "./logger.js";
 import { runCheckForUrl } from "./modules/checks/checks.service.js";
 import { pruneOldChecks, rollupRecent } from "./modules/stats/rollup.js";
 import { CHECK_QUEUE_NAME, queueEvents, type CheckJobData } from "./queue/checkQueue.js";
@@ -27,7 +27,17 @@ const worker = new Worker<CheckJobData>(
     // it 3x per interval, hammering a site that is already struggling, and each
     // attempt would write another DOWN row, inflating the outage in the history
     // and in any uptime percentage computed from it.
-    return runCheckForUrl(job.data.urlId);
+
+    // reqId comes from the request that enqueued this job (manual checks), so a
+    // single trace spans the API process and this one. Scheduled jobs have none.
+    // urlId is deliberately not bound here: checks.service already logs it, and
+    // binding it too emitted the key twice in the same JSON line.
+    const jobLogger = logger.child({
+      reqId: job.data.reqId,
+      jobId: job.id,
+      trigger: job.data.trigger,
+    });
+    return runWithLogger(jobLogger, () => runCheckForUrl(job.data.urlId));
   },
   { connection, concurrency: config.checkConcurrency },
 );
@@ -96,9 +106,9 @@ const maintenanceWorker = new Worker(
   async (job) => {
     switch (job.name) {
       case ROLLUP_JOB:
-        return rollupRecent();
+        return runWithLogger(logger.child({ jobId: job.id, job: job.name }), rollupRecent);
       case PRUNE_JOB:
-        return pruneOldChecks();
+        return runWithLogger(logger.child({ jobId: job.id, job: job.name }), pruneOldChecks);
       default:
         throw new Error(`unknown maintenance job: ${job.name}`);
     }

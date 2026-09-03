@@ -1,6 +1,6 @@
 import type { Url } from "@prisma/client";
 import { prisma } from "../db.js";
-import { logger } from "../logger.js";
+import { getLogger } from "../logger.js";
 import { CHECK_JOB_NAME, checkQueue } from "./checkQueue.js";
 
 /** One scheduler per URL, keyed so it can be found again without extra state. */
@@ -50,6 +50,6 @@ export async function reconcileSchedules(): Promise<{ scheduled: number; removed
   }
 
   const counts = { scheduled: active.length, removed };
-  logger.info(counts, "reconciled job schedulers");
+  getLogger().info(counts, "reconciled job schedulers");
   return counts;
 }

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import cors from "cors";
 import express, { type NextFunction, type Request, type Response } from "express";
 import rateLimit from "express-rate-limit";
@@ -7,7 +8,7 @@ import "./bigintJson.js";
 import { config } from "./config.js";
 import { prisma } from "./db.js";
 import { AppError } from "./errors.js";
-import { logger } from "./logger.js";
+import { logger, runWithLogger } from "./logger.js";
 import { authRouter } from "./modules/auth/auth.routes.js";
 import { checksRouter } from "./modules/checks/checks.routes.js";
 import {
@@ -23,7 +24,39 @@ export const app = express();
 app.use(helmet());
 app.use(cors({ origin: config.corsOrigin, credentials: false }));
 app.use(express.json());
-app.use(pinoHttp({ logger }));
+app.use(
+  pinoHttp({
+    logger,
+    // Honour an upstream x-request-id so a trace survives across hops, and mint
+    // one otherwise. Echoed back so clients can quote it when reporting a problem.
+    genReqId: (req, res) => {
+      const incoming = req.headers["x-request-id"];
+      const id = typeof incoming === "string" && incoming.length > 0 ? incoming : randomUUID();
+      res.setHeader("x-request-id", id);
+      return id;
+    },
+    customLogLevel: (req, res, err) => {
+      // /health is polled by the container healthcheck every few seconds; at info
+      // it drowns out everything else.
+      if (req.url === "/health") {
+        return "debug";
+      }
+      if (err || res.statusCode >= 500) {
+        return "error";
+      }
+      if (res.statusCode >= 400) {
+        return "warn";
+      }
+      return "info";
+    },
+  }),
+);
+
+// Everything downstream runs inside the request's logger context, so
+// getLogger() in any service returns a child already carrying reqId.
+app.use((req: Request, _res: Response, next: NextFunction) => {
+  runWithLogger(req.log.child({ reqId: req.id }), next);
+});
 
 const authRateLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,

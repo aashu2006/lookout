@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { AppError } from "../../errors.js";
+import { getLogger } from "../../logger.js";
 import { asyncHandler } from "../../middleware/asyncHandler.js";
 import { CHECK_JOB_NAME, checkQueue, queueEvents } from "../../queue/checkQueue.js";
 import { requireAuth } from "../auth/auth.middleware.js";
@@ -27,9 +28,10 @@ checksRouter.post(
     // ahead of the scheduled backlog.
     const job = await checkQueue.add(
       CHECK_JOB_NAME,
-      { urlId: url.id, trigger: "manual" },
+      { urlId: url.id, trigger: "manual", reqId: String(req.id) },
       { priority: 1 },
     );
+    getLogger().info({ jobId: job.id, urlId: url.id, trigger: "manual" }, "check job enqueued");
 
     try {
       const check = await job.waitUntilFinished(queueEvents, MANUAL_CHECK_TIMEOUT_MS);
@@ -55,9 +57,10 @@ checksRouter.post(
       await checkQueue.addBulk(
         urlIds.map((urlId) => ({
           name: CHECK_JOB_NAME,
-          data: { urlId, trigger: "manual" as const },
+          data: { urlId, trigger: "manual" as const, reqId: String(req.id) },
         })),
       );
+      getLogger().info({ count: urlIds.length, trigger: "manual" }, "check jobs enqueued");
     }
 
     // Fire and forget: results land in the check history as the worker drains them.

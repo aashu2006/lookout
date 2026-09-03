@@ -8,7 +8,13 @@ const envSchema = z.object({
   LOG_LEVEL: z
     .enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"])
     .default("info"),
-  LOG_PRETTY: z.coerce.boolean().default(false),
+  // Not z.coerce.boolean(): that is just Boolean(value), so the string "false"
+  // comes out true and LOG_PRETTY=false would still load pino-pretty — which
+  // does not exist in the production image.
+  LOG_PRETTY: z
+    .string()
+    .default("false")
+    .transform((value) => ["1", "true", "yes", "on"].includes(value.trim().toLowerCase())),
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   JWT_SECRET: z.string().min(32, "JWT_SECRET must be at least 32 characters"),
   JWT_EXPIRES_IN: z.string().default("7d"),

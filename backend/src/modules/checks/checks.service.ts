@@ -2,7 +2,7 @@ import type { Check } from "@prisma/client";
 import { config } from "../../config.js";
 import { prisma } from "../../db.js";
 import { AppError } from "../../errors.js";
-import { logger } from "../../logger.js";
+import { getLogger } from "../../logger.js";
 import { checkUrl, type CheckResult } from "./checker.js";
 
 export async function recordCheck(urlId: string, result: CheckResult): Promise<Check> {
@@ -37,9 +37,9 @@ export async function runCheckForUrl(urlId: string): Promise<Check> {
     errorType: result.errorType,
   };
   if (result.status === "UP") {
-    logger.info(fields, "check completed");
+    getLogger().info(fields, "check completed");
   } else {
-    logger.warn(fields, "check failed");
+    getLogger().warn(fields, "check failed");
   }
 
   return check;

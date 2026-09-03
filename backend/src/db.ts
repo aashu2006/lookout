@@ -1,5 +1,5 @@
 import { Prisma, PrismaClient } from "@prisma/client";
-import { logger } from "./logger.js";
+import { getLogger } from "./logger.js";
 
 export const prisma = new PrismaClient({
   log: [
@@ -9,12 +9,12 @@ export const prisma = new PrismaClient({
 });
 
 prisma.$on("query", (event: Prisma.QueryEvent) => {
-  logger.debug(
+  getLogger().debug(
     { query: event.query, params: event.params, durationMs: event.duration },
     "prisma query",
   );
 });
 
 prisma.$on("error", (event: Prisma.LogEvent) => {
-  logger.error({ message: event.message, target: event.target }, "prisma error");
+  getLogger().error({ message: event.message, target: event.target }, "prisma error");
 });

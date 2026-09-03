@@ -1,3 +1,15 @@
+# Full stack. Everything the browser needs is on http://localhost:8080 — nginx
+# serves the built frontend and proxies /api to the api container, so Postgres,
+# Redis and the API itself stay on the internal network with no published ports.
+#
+#   docker compose up --build -d
+#
+# For host development (npm run dev in backend/ and frontend/) you need Postgres
+# and Redis reachable from the host instead. The override file publishes their
+# ports and nothing else:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres redis
+
 services:
   postgres:
     image: postgres:16
@@ -6,8 +18,6 @@ services:
       POSTGRES_USER: lookout
       POSTGRES_PASSWORD: lookout
       POSTGRES_DB: lookout
-    ports:
-      - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -19,11 +29,80 @@ services:
   redis:
     image: redis:7
     restart: unless-stopped
-    ports:
-      - "6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    # Migrations run here rather than in an entrypoint script so there is exactly
+    # one place that touches the schema, and the worker waits on this being healthy.
+    command: sh -c "npx prisma migrate deploy && node dist/server.js"
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      DATABASE_URL: postgresql://lookout:lookout@postgres:5432/lookout
+      REDIS_URL: redis://redis:6379
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_PRETTY: "false"
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:8080}
+      CHECK_TIMEOUT_MS: ${CHECK_TIMEOUT_MS:-10000}
+      CHECK_CONCURRENCY: ${CHECK_CONCURRENCY:-10}
+      CHECK_RETENTION_DAYS: ${CHECK_RETENTION_DAYS:-7}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--spider", "http://localhost:4000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+
+  worker:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    # Same image as the api, different entry point.
+    command: node dist/worker.js
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://lookout:lookout@postgres:5432/lookout
+      REDIS_URL: redis://redis:6379
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_PRETTY: "false"
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-}
+      CHECK_TIMEOUT_MS: ${CHECK_TIMEOUT_MS:-10000}
+      CHECK_CONCURRENCY: ${CHECK_CONCURRENCY:-10}
+      CHECK_RETENTION_DAYS: ${CHECK_RETENTION_DAYS:-7}
+    depends_on:
+      # Waits for migrations: the api only reports healthy after they have run.
+      api:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      # 127.0.0.1, not localhost: busybox wget tries ::1 first and nginx's
+      # `listen 80` binds IPv4 only, so the check would fail against a healthy server.
+      test: ["CMD", "wget", "--quiet", "--spider", "http://127.0.0.1:80/"]
+      interval: 10s
       timeout: 5s
       retries: 5
 

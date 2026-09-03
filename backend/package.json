@@ -17,7 +17,8 @@
     "db:migrate": "prisma migrate dev",
     "db:generate": "prisma generate",
     "db:studio": "prisma studio",
-    "db:reset": "prisma migrate reset --force"
+    "db:reset": "prisma migrate reset --force",
+    "seed": "tsx src/scripts/seed.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.19.3",
@@ -32,6 +33,7 @@
     "jsonwebtoken": "^9.0.3",
     "pino": "^9.6.0",
     "pino-http": "^10.4.0",
+    "prisma": "^6.19.3",
     "zod": "^3.24.1"
   },
   "devDependencies": {
@@ -40,7 +42,6 @@
     "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^20.17.16",
     "pino-pretty": "^13.0.0",
-    "prisma": "^6.19.3",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3",
     "vitest": "^4.1.11"

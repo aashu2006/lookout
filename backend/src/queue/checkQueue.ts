@@ -7,6 +7,9 @@ export const CHECK_JOB_NAME = "check";
 export interface CheckJobData {
   urlId: string;
   trigger: "scheduled" | "manual";
+  /** Correlation id of the request that enqueued this job, when there was one.
+   * Scheduled jobs have no originating request and leave it undefined. */
+  reqId?: string;
 }
 
 export const checkQueue = new Queue<CheckJobData>(CHECK_QUEUE_NAME, {

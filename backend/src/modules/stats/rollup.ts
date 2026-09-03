@@ -1,6 +1,6 @@
 import { config } from "../../config.js";
 import { prisma } from "../../db.js";
-import { logger } from "../../logger.js";
+import { getLogger } from "../../logger.js";
 
 const HOUR_MS = 60 * 60 * 1000;
 const PRUNE_BATCH_SIZE = 10000;
@@ -55,7 +55,7 @@ export async function rollupRecent(): Promise<{ previousHour: number; currentHou
   const current = await rollupHour(currentHour);
 
   const counts = { previousHour: previous, currentHour: current };
-  logger.info({ ...counts, hour: currentHour.toISOString() }, "rolled up hourly stats");
+  getLogger().info({ ...counts, hour: currentHour.toISOString() }, "rolled up hourly stats");
   return counts;
 }
 
@@ -80,7 +80,7 @@ export async function pruneOldChecks(): Promise<number> {
     }
   }
 
-  logger.info(
+  getLogger().info(
     { removed, cutoff: cutoff.toISOString(), retentionDays: config.checkRetentionDays },
     "pruned old checks",
   );

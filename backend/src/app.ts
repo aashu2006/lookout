@@ -8,6 +8,7 @@ import { prisma } from "./db.js";
 import { AppError } from "./errors.js";
 import { logger } from "./logger.js";
 import { authRouter } from "./modules/auth/auth.routes.js";
+import { checksRouter } from "./modules/checks/checks.routes.js";
 import { urlsRouter } from "./modules/urls/urls.routes.js";
 
 // Check.id is a Postgres bigint, which Prisma hands back as a JS BigInt, and
@@ -38,6 +39,9 @@ const authRateLimiter = rateLimit({
 });
 
 app.use("/api/auth", authRateLimiter, authRouter);
+// Both share the /api/urls prefix: checksRouter owns POST /:id/check and
+// POST /check-all, which don't collide with any urlsRouter route.
+app.use("/api/urls", checksRouter);
 app.use("/api/urls", urlsRouter);
 
 app.get("/health", async (req: Request, res: Response) => {

@@ -14,6 +14,8 @@ const envSchema = z.object({
   JWT_EXPIRES_IN: z.string().default("7d"),
   ADMIN_EMAILS: z.string().optional(),
   CORS_ORIGIN: z.string().default("http://localhost:5173"),
+  CHECK_TIMEOUT_MS: z.coerce.number().int().positive().default(10000),
+  CHECK_CONCURRENCY: z.coerce.number().int().positive().default(10),
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -48,6 +50,8 @@ export const config = {
   jwtExpiresIn: env.JWT_EXPIRES_IN,
   adminEmails,
   corsOrigin: env.CORS_ORIGIN,
+  checkTimeoutMs: env.CHECK_TIMEOUT_MS,
+  checkConcurrency: env.CHECK_CONCURRENCY,
 } as const;
 
 export type Config = typeof config;

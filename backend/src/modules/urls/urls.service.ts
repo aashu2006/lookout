@@ -144,7 +144,11 @@ export async function listUrls(
     prisma.url.count({ where }),
     prisma.url.findMany({
       where,
-      orderBy: { createdAt: "desc" },
+      // id breaks ties: a bulk import writes every row with the same createdAt,
+      // and without a tiebreaker Postgres is free to return them in heap order —
+      // so updating one row (pause/resume) moved it to the end of the list and
+      // the table visibly reshuffled under the user between polls.
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
       skip: (page - 1) * pageSize,
       take: pageSize,
       // Latest check per URL without N+1: under Prisma's default load strategy

@@ -8,6 +8,19 @@ import { prisma } from "./db.js";
 import { AppError } from "./errors.js";
 import { logger } from "./logger.js";
 import { authRouter } from "./modules/auth/auth.routes.js";
+import { urlsRouter } from "./modules/urls/urls.routes.js";
+
+// Check.id is a Postgres bigint, which Prisma hands back as a JS BigInt, and
+// JSON.stringify throws on BigInt values. Serialize them as strings — Number()
+// would silently lose precision past 2^53. Applied once, globally, before routes.
+declare global {
+  interface BigInt {
+    toJSON(): string;
+  }
+}
+BigInt.prototype.toJSON = function (): string {
+  return this.toString();
+};
 
 export const app = express();
 
@@ -25,6 +38,7 @@ const authRateLimiter = rateLimit({
 });
 
 app.use("/api/auth", authRateLimiter, authRouter);
+app.use("/api/urls", urlsRouter);
 
 app.get("/health", async (req: Request, res: Response) => {
   let db: "ok" | "error" = "ok";

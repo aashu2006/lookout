@@ -1,7 +1,6 @@
 import { Prisma, type Check, type Url } from "@prisma/client";
 import { prisma } from "../../db.js";
 import { AppError } from "../../errors.js";
-import { CHECK_JOB_NAME, checkQueue } from "../../queue/checkQueue.js";
 import { scheduleUrl, unscheduleUrl } from "../../queue/scheduler.js";
 import type { AuthUser } from "../../types/express.js";
 import { normalizeUrl } from "./normalizeUrl.js";
@@ -20,20 +19,15 @@ function isAdmin(user: AuthUser): boolean {
   return user.role === "ADMIN";
 }
 
-/** Starts the recurring schedule for newly created URLs, plus one immediate
- * manual job each so the user sees a first result now rather than after a
- * full interval. */
+/** Starts the recurring schedule for newly created URLs. No extra manual job is
+ * enqueued here: upsertJobScheduler fires its first run immediately, so a new
+ * URL already gets one check right away — adding a manual one produced two
+ * near-identical rows per create. */
 async function onUrlsCreated(urls: Url[]): Promise<void> {
   if (urls.length === 0) {
     return;
   }
   await Promise.all(urls.map((url) => scheduleUrl(url)));
-  await checkQueue.addBulk(
-    urls.map((url) => ({
-      name: CHECK_JOB_NAME,
-      data: { urlId: url.id, trigger: "manual" as const },
-    })),
-  );
 }
 
 export async function createUrl(userId: string, input: CreateUrlInput): Promise<Url> {

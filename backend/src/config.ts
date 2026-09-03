@@ -16,6 +16,7 @@ const envSchema = z.object({
   CORS_ORIGIN: z.string().default("http://localhost:5173"),
   CHECK_TIMEOUT_MS: z.coerce.number().int().positive().default(10000),
   CHECK_CONCURRENCY: z.coerce.number().int().positive().default(10),
+  CHECK_RETENTION_DAYS: z.coerce.number().int().positive().default(7),
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -52,6 +53,7 @@ export const config = {
   corsOrigin: env.CORS_ORIGIN,
   checkTimeoutMs: env.CHECK_TIMEOUT_MS,
   checkConcurrency: env.CHECK_CONCURRENCY,
+  checkRetentionDays: env.CHECK_RETENTION_DAYS,
 } as const;
 
 export type Config = typeof config;

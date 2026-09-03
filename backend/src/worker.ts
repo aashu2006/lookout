@@ -2,12 +2,13 @@
 // jobs — it never constructs a Worker — so HTTP latency is never affected by a
 // slow site, and checks keep running even while the API is redeploying. Run it
 // with `npm run worker` (dev) or `npm run start:worker` (built).
-import { Worker } from "bullmq";
+import { Queue, Worker } from "bullmq";
 import "./bigintJson.js";
 import { config } from "./config.js";
 import { prisma } from "./db.js";
 import { logger } from "./logger.js";
 import { runCheckForUrl } from "./modules/checks/checks.service.js";
+import { pruneOldChecks, rollupRecent } from "./modules/stats/rollup.js";
 import { CHECK_QUEUE_NAME, queueEvents, type CheckJobData } from "./queue/checkQueue.js";
 import { createRedisConnection, redis } from "./queue/connection.js";
 import { reconcileSchedules } from "./queue/scheduler.js";
@@ -67,8 +68,90 @@ worker.on("failed", (job, err) => {
 
 worker.on("error", (err) => logger.error({ err }, "worker error"));
 
+// --- Maintenance queue: periodic rollup and retention, worker-side only. ---
+
+const MAINTENANCE_QUEUE_NAME = "maintenance";
+const ROLLUP_JOB = "rollup";
+const PRUNE_JOB = "prune";
+
+const MAINTENANCE_SCHEDULES = [
+  { id: ROLLUP_JOB, every: 5 * 60 * 1000 },
+  { id: PRUNE_JOB, every: 24 * 60 * 60 * 1000 },
+];
+
+const maintenanceConnection = createRedisConnection();
+
+const maintenanceQueue = new Queue(MAINTENANCE_QUEUE_NAME, {
+  connection: redis,
+  defaultJobOptions: {
+    attempts: 3,
+    backoff: { type: "exponential", delay: 1000 },
+    removeOnComplete: 100,
+    removeOnFail: 100,
+  },
+});
+
+const maintenanceWorker = new Worker(
+  MAINTENANCE_QUEUE_NAME,
+  async (job) => {
+    switch (job.name) {
+      case ROLLUP_JOB:
+        return rollupRecent();
+      case PRUNE_JOB:
+        return pruneOldChecks();
+      default:
+        throw new Error(`unknown maintenance job: ${job.name}`);
+    }
+  },
+  // Serial: these are whole-table statements, and overlapping runs would only
+  // contend for the same rows.
+  { connection: maintenanceConnection, concurrency: 1 },
+);
+
+maintenanceWorker.on("ready", () => {
+  logger.info({ queue: MAINTENANCE_QUEUE_NAME }, "maintenance worker ready");
+});
+
+maintenanceWorker.on("failed", (job, err) => {
+  logger.error({ jobId: job?.id, name: job?.name, err }, "maintenance job failed");
+});
+
+maintenanceWorker.on("error", (err) => logger.error({ err }, "maintenance worker error"));
+
+/** Same reconcile-on-boot pattern as the URL schedulers: this list is the source
+ * of truth, and anything else left in Redis is removed. */
+async function reconcileMaintenanceSchedules(): Promise<void> {
+  for (const schedule of MAINTENANCE_SCHEDULES) {
+    await maintenanceQueue.upsertJobScheduler(
+      schedule.id,
+      { every: schedule.every },
+      { name: schedule.id },
+    );
+  }
+
+  const expected = new Set(MAINTENANCE_SCHEDULES.map((schedule) => schedule.id));
+  const existing = await maintenanceQueue.getJobSchedulers(0, -1);
+
+  let removed = 0;
+  for (const scheduler of existing) {
+    if (!expected.has(scheduler.key)) {
+      await maintenanceQueue.removeJobScheduler(scheduler.key);
+      removed += 1;
+    }
+  }
+
+  logger.info(
+    { scheduled: MAINTENANCE_SCHEDULES.length, removed },
+    "reconciled maintenance schedulers",
+  );
+}
+
 // Bring Redis in line with the database before processing anything.
 await reconcileSchedules();
+await reconcileMaintenanceSchedules();
+// Fill in any hours missed while this process was down, so the dashboard is
+// current immediately rather than after the first scheduled rollup.
+await rollupRecent();
 
 let shuttingDown = false;
 
@@ -82,8 +165,11 @@ async function shutdown(signal: string): Promise<void> {
   try {
     // close() waits for in-flight jobs to finish before releasing the lock.
     await worker.close();
+    await maintenanceWorker.close();
+    await maintenanceQueue.close();
     await queueEvents.close();
     await connection.quit();
+    await maintenanceConnection.quit();
     await redis.quit();
     await prisma.$disconnect();
     logger.info("worker shutdown complete");

@@ -10,6 +10,11 @@ import { AppError } from "./errors.js";
 import { logger } from "./logger.js";
 import { authRouter } from "./modules/auth/auth.routes.js";
 import { checksRouter } from "./modules/checks/checks.routes.js";
+import {
+  dashboardRouter,
+  metricsRouter,
+  statsRouter,
+} from "./modules/stats/stats.routes.js";
 import { urlsRouter } from "./modules/urls/urls.routes.js";
 import { pingRedis } from "./queue/connection.js";
 
@@ -32,7 +37,10 @@ app.use("/api/auth", authRateLimiter, authRouter);
 // Both share the /api/urls prefix: checksRouter owns POST /:id/check and
 // POST /check-all, which don't collide with any urlsRouter route.
 app.use("/api/urls", checksRouter);
+app.use("/api/urls", statsRouter);
 app.use("/api/urls", urlsRouter);
+app.use("/api/dashboard", dashboardRouter);
+app.use("/api", metricsRouter);
 
 app.get("/health", async (req: Request, res: Response) => {
   let db: "ok" | "error" = "ok";

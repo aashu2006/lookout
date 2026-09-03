@@ -1,6 +1,8 @@
 import { Prisma, type Check, type Url } from "@prisma/client";
 import { prisma } from "../../db.js";
 import { AppError } from "../../errors.js";
+import { CHECK_JOB_NAME, checkQueue } from "../../queue/checkQueue.js";
+import { scheduleUrl, unscheduleUrl } from "../../queue/scheduler.js";
 import type { AuthUser } from "../../types/express.js";
 import { normalizeUrl } from "./normalizeUrl.js";
 import type { CreateUrlInput, ListUrlsQuery, PatchUrlInput } from "./urls.schemas.js";
@@ -18,6 +20,22 @@ function isAdmin(user: AuthUser): boolean {
   return user.role === "ADMIN";
 }
 
+/** Starts the recurring schedule for newly created URLs, plus one immediate
+ * manual job each so the user sees a first result now rather than after a
+ * full interval. */
+async function onUrlsCreated(urls: Url[]): Promise<void> {
+  if (urls.length === 0) {
+    return;
+  }
+  await Promise.all(urls.map((url) => scheduleUrl(url)));
+  await checkQueue.addBulk(
+    urls.map((url) => ({
+      name: CHECK_JOB_NAME,
+      data: { urlId: url.id, trigger: "manual" as const },
+    })),
+  );
+}
+
 export async function createUrl(userId: string, input: CreateUrlInput): Promise<Url> {
   let normalized: string;
   try {
@@ -27,9 +45,11 @@ export async function createUrl(userId: string, input: CreateUrlInput): Promise<
   }
 
   try {
-    return await prisma.url.create({
+    const url = await prisma.url.create({
       data: { userId, url: normalized, intervalSeconds: input.intervalSeconds },
     });
+    await onUrlsCreated([url]);
+    return url;
   } catch (err) {
     // Unique constraint on (userId, url) — caught rather than pre-checked so a
     // concurrent create can't slip between a lookup and the insert.
@@ -106,6 +126,8 @@ export async function bulkCreateUrls(
     }
   }
 
+  await onUrlsCreated(created);
+
   return { created, skipped };
 }
 
@@ -163,7 +185,21 @@ export async function updateUrl(user: AuthUser, id: string, patch: PatchUrlInput
   if (!existing) {
     throw new AppError(404, "not_found", "URL not found");
   }
-  return prisma.url.update({ where: { id }, data: patch });
+
+  const updated = await prisma.url.update({ where: { id }, data: patch });
+
+  if (updated.isActive) {
+    const reactivated = patch.isActive === true && !existing.isActive;
+    const intervalChanged = updated.intervalSeconds !== existing.intervalSeconds;
+    if (reactivated || intervalChanged) {
+      // upsert, so re-pointing an existing scheduler at a new interval is safe.
+      await scheduleUrl(updated);
+    }
+  } else if (existing.isActive) {
+    await unscheduleUrl(updated.id);
+  }
+
+  return updated;
 }
 
 export async function deleteUrl(user: AuthUser, id: string): Promise<void> {
@@ -171,6 +207,9 @@ export async function deleteUrl(user: AuthUser, id: string): Promise<void> {
   if (!existing) {
     throw new AppError(404, "not_found", "URL not found");
   }
+  // Drop the schedule first: a scheduler that fires against a deleted row would
+  // just burn its retries on a 404.
+  await unscheduleUrl(id);
   // Checks and hourly stats cascade via the schema's onDelete: Cascade.
   await prisma.url.delete({ where: { id } });
 }

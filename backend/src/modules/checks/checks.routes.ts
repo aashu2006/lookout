@@ -1,9 +1,13 @@
 import { Router } from "express";
 import { AppError } from "../../errors.js";
 import { asyncHandler } from "../../middleware/asyncHandler.js";
+import { CHECK_JOB_NAME, checkQueue, queueEvents } from "../../queue/checkQueue.js";
 import { requireAuth } from "../auth/auth.middleware.js";
 import { getUrlById } from "../urls/urls.service.js";
-import { getActiveUrlIdsForUser, runCheckForUrl, runChecksForUrls } from "./checks.service.js";
+import { getActiveUrlIdsForUser } from "./checks.service.js";
+
+/** How long the synchronous manual check waits before handing back a job id. */
+const MANUAL_CHECK_TIMEOUT_MS = 15000;
 
 export const checksRouter = Router();
 
@@ -19,8 +23,26 @@ checksRouter.post(
       throw new AppError(404, "not_found", "URL not found");
     }
 
-    const check = await runCheckForUrl(url.id);
-    res.status(200).json({ check });
+    // priority 1 (highest) so a person waiting on a response jumps the queue
+    // ahead of the scheduled backlog.
+    const job = await checkQueue.add(
+      CHECK_JOB_NAME,
+      { urlId: url.id, trigger: "manual" },
+      { priority: 1 },
+    );
+
+    try {
+      const check = await job.waitUntilFinished(queueEvents, MANUAL_CHECK_TIMEOUT_MS);
+      res.status(200).json({ check });
+    } catch (err) {
+      // waitUntilFinished rejects both when we give up waiting and when the job
+      // itself failed; only the former is a "still queued" answer.
+      const state = await job.getState();
+      if (state === "failed") {
+        throw new AppError(502, "check_failed", "The check job failed to run");
+      }
+      res.status(202).json({ jobId: job.id, message: "queued" });
+    }
   }),
 );
 
@@ -29,22 +51,16 @@ checksRouter.post(
   asyncHandler(async (req, res) => {
     const urlIds = await getActiveUrlIdsForUser(req.user!.id);
 
-    const startedAt = performance.now();
-    const results = await runChecksForUrls(urlIds);
-    const durationMs = Math.round(performance.now() - startedAt);
-
-    let up = 0;
-    let down = 0;
-    for (const result of results) {
-      // A rejected settle means the check itself failed to run (e.g. the row
-      // vanished mid-run); count it as down so total always equals up + down.
-      if (result.status === "fulfilled" && result.value.status === "UP") {
-        up += 1;
-      } else {
-        down += 1;
-      }
+    if (urlIds.length > 0) {
+      await checkQueue.addBulk(
+        urlIds.map((urlId) => ({
+          name: CHECK_JOB_NAME,
+          data: { urlId, trigger: "manual" as const },
+        })),
+      );
     }
 
-    res.status(200).json({ total: urlIds.length, up, down, durationMs });
+    // Fire and forget: results land in the check history as the worker drains them.
+    res.status(202).json({ enqueued: urlIds.length });
   }),
 );

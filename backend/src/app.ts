@@ -3,6 +3,7 @@ import express, { type NextFunction, type Request, type Response } from "express
 import rateLimit from "express-rate-limit";
 import helmet from "helmet";
 import { pinoHttp } from "pino-http";
+import "./bigintJson.js";
 import { config } from "./config.js";
 import { prisma } from "./db.js";
 import { AppError } from "./errors.js";
@@ -10,18 +11,7 @@ import { logger } from "./logger.js";
 import { authRouter } from "./modules/auth/auth.routes.js";
 import { checksRouter } from "./modules/checks/checks.routes.js";
 import { urlsRouter } from "./modules/urls/urls.routes.js";
-
-// Check.id is a Postgres bigint, which Prisma hands back as a JS BigInt, and
-// JSON.stringify throws on BigInt values. Serialize them as strings — Number()
-// would silently lose precision past 2^53. Applied once, globally, before routes.
-declare global {
-  interface BigInt {
-    toJSON(): string;
-  }
-}
-BigInt.prototype.toJSON = function (): string {
-  return this.toString();
-};
+import { pingRedis } from "./queue/connection.js";
 
 export const app = express();
 
@@ -53,11 +43,19 @@ app.get("/health", async (req: Request, res: Response) => {
     req.log.error({ err }, "health check: db unreachable");
   }
 
-  res.status(db === "ok" ? 200 : 503).json({
+  const redis: "ok" | "error" = (await pingRedis()) ? "ok" : "error";
+  if (redis === "error") {
+    req.log.error("health check: redis unreachable");
+  }
+
+  const healthy = db === "ok" && redis === "ok";
+
+  res.status(healthy ? 200 : 503).json({
     status: "ok",
     uptime: process.uptime(),
     timestamp: new Date().toISOString(),
     db,
+    redis,
   });
 });
 

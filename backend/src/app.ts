@@ -75,13 +75,30 @@ app.use("/api/urls", urlsRouter);
 app.use("/api/dashboard", dashboardRouter);
 app.use("/api", metricsRouter);
 
+/**
+ * Ceiling on the database probe. Generous enough to cover the first request,
+ * which pays for the Prisma engine's initial connect, but bounded: /health has
+ * to answer even when Postgres is hung, or the platform's healthcheck sees a
+ * request timeout and cannot distinguish "unhealthy" from "not listening".
+ * pingRedis applies its own, shorter, limit.
+ */
+const HEALTH_DB_TIMEOUT_MS = 5000;
+
 app.get("/health", async (req: Request, res: Response) => {
   let db: "ok" | "error" = "ok";
+  let timer: NodeJS.Timeout | undefined;
   try {
-    await prisma.$queryRaw`SELECT 1`;
+    await Promise.race([
+      prisma.$queryRaw`SELECT 1`,
+      new Promise((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error("db ping timed out")), HEALTH_DB_TIMEOUT_MS);
+      }),
+    ]);
   } catch (err) {
     db = "error";
     req.log.error({ err }, "health check: db unreachable");
+  } finally {
+    clearTimeout(timer);
   }
 
   const redis: "ok" | "error" = (await pingRedis()) ? "ok" : "error";

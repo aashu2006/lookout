@@ -13,7 +13,7 @@ import { CHECK_QUEUE_NAME, queueEvents, type CheckJobData } from "./queue/checkQ
 import { createRedisConnection, redis } from "./queue/connection.js";
 import { reconcileSchedules } from "./queue/scheduler.js";
 
-const connection = createRedisConnection();
+const connection = createRedisConnection("worker");
 
 const worker = new Worker<CheckJobData>(
   CHECK_QUEUE_NAME,
@@ -89,7 +89,7 @@ const MAINTENANCE_SCHEDULES = [
   { id: PRUNE_JOB, every: 24 * 60 * 60 * 1000 },
 ];
 
-const maintenanceConnection = createRedisConnection();
+const maintenanceConnection = createRedisConnection("maintenance");
 
 const maintenanceQueue = new Queue(MAINTENANCE_QUEUE_NAME, {
   connection: redis,

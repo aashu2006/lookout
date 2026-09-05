@@ -2,16 +2,17 @@ import type { ErrorType } from "@prisma/client";
 
 const DNS_CODES = new Set(["ENOTFOUND", "EAI_AGAIN"]);
 const NETWORK_CODES = new Set(["ECONNRESET", "EHOSTUNREACH", "ENETUNREACH"]);
-const TLS_CODES = new Set([
-  "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
-  "DEPTH_ZERO_SELF_SIGNED_CERT",
-  "SELF_SIGNED_CERT_IN_CHAIN",
-]);
+/** Certificate failures OpenSSL names without the word CERT. */
+const TLS_CODES = new Set(["UNABLE_TO_VERIFY_LEAF_SIGNATURE"]);
 
 function isTlsCode(code: string): boolean {
   return (
+    // Anything mentioning a certificate is a TLS problem, wherever the word sits
+    // in the code: CERT_HAS_EXPIRED, DEPTH_ZERO_SELF_SIGNED_CERT,
+    // SELF_SIGNED_CERT_IN_CHAIN, ERR_TLS_CERT_ALTNAME_INVALID and any future
+    // OpenSSL code we have not seen yet.
+    code.includes("CERT") ||
     code.startsWith("ERR_TLS_") ||
-    code.startsWith("CERT_") ||
     code.startsWith("ERR_SSL_") ||
     TLS_CODES.has(code)
   );

@@ -59,6 +59,16 @@ describe("classifyError", () => {
     expect(classifyError(fetchError(code)).errorType).toBe("TLS_ERROR");
   });
 
+  it.each([
+    "SOME_UNSEEN_CERT_PROBLEM",
+    "X509_CERT_MALFORMED",
+    "DEPTH_TWO_SELF_SIGNED_CERT_IN_CHAIN",
+  ])("maps unfamiliar certificate code %s to TLS_ERROR", (code) => {
+    // The word CERT anywhere in the code is enough; OpenSSL names these
+    // inconsistently and new ones appear between Node releases.
+    expect(classifyError(fetchError(code)).errorType).toBe("TLS_ERROR");
+  });
+
   it("maps a TypeError about an invalid URL to INVALID_URL", () => {
     expect(classifyError(new TypeError("Invalid URL")).errorType).toBe("INVALID_URL");
   });

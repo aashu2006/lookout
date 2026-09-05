@@ -3,8 +3,26 @@ import { z } from "zod";
 
 const envSchema = z.object({
   PORT: z.coerce.number().int().positive().default(4000),
+  // Both are passed to Prisma and ioredis exactly as given, so a provider's
+  // connection string (credentials, ?sslmode=..., internal hostname) works
+  // unmodified.
   DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
   REDIS_URL: z.string().min(1, "REDIS_URL is required"),
+  // DNS resolution family for the Redis connection. Unset uses ioredis's own
+  // default (IPv4). Set to 0 on hosts whose private networking is IPv6-only —
+  // Railway's *.railway.internal names publish AAAA records only, and the
+  // IPv4-only default cannot resolve them.
+  // Not z.coerce.number(): Number("") is 0, so an empty REDIS_FAMILY= line in a
+  // .env would silently switch the family to 0 instead of leaving it unset.
+  REDIS_FAMILY: z
+    .string()
+    .trim()
+    .optional()
+    .transform((value) => (value ? Number(value) : undefined))
+    .refine(
+      (value) => value === undefined || Number.isInteger(value),
+      "REDIS_FAMILY must be an integer (0, 4 or 6)",
+    ),
   LOG_LEVEL: z
     .enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"])
     .default("info"),
@@ -49,6 +67,7 @@ export const config = {
   port: env.PORT,
   databaseUrl: env.DATABASE_URL,
   redisUrl: env.REDIS_URL,
+  redisFamily: env.REDIS_FAMILY,
   logLevel: env.LOG_LEVEL,
   logPretty: env.LOG_PRETTY,
   nodeEnv: env.NODE_ENV,

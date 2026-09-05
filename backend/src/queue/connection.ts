@@ -7,7 +7,13 @@ import { logger } from "../logger.js";
  * XREAD) must never be aborted part-way through a wait.
  */
 export function createRedisConnection(): Redis {
-  const connection = new Redis(config.redisUrl, { maxRetriesPerRequest: null });
+  const connection = new Redis(config.redisUrl, {
+    maxRetriesPerRequest: null,
+    // Only override ioredis's default lookup family when REDIS_FAMILY is set.
+    // Needed on IPv6-only private networks (Railway): family 0 lets the
+    // resolver accept the AAAA record that *.railway.internal returns.
+    ...(config.redisFamily === undefined ? {} : { family: config.redisFamily }),
+  });
   // ioredis emits 'error' on every failed reconnect attempt; without a listener
   // Node would treat it as an unhandled error event and kill the process, so a
   // Redis outage must not take the API down with it. Debug level: it repeats on

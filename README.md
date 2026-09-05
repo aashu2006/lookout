@@ -4,6 +4,20 @@ URL health and observability platform. Monitors URLs on a schedule, records stat
 
 ![Dashboard](docs/screenshots/dashboard.png)
 
+## Live demo
+
+| | |
+| --- | --- |
+| App | <!-- TODO: Vercel URL --> `https://REPLACE-ME.vercel.app` |
+| API health | <!-- TODO: Railway URL --> `https://REPLACE-ME.up.railway.app/health` |
+
+Sign in as `demo@lookout.dev` / `demo1234` for the seeded dataset (50 URLs, 100k
+checks over 7 days), or `admin@lookout.dev` / `admin1234` for the admin view with
+the metrics page. Signing up creates an empty account; **Try the sample** fills it.
+
+The frontend is on Vercel and the api and worker are on Railway, with Postgres
+and Redis alongside them. Deployment steps are in [docs/DEPLOY.md](docs/DEPLOY.md).
+
 ## Quick start
 
 Prerequisites: Docker and Docker Compose.

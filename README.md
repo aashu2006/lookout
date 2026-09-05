@@ -1,26 +1,21 @@
 # lookout
 
-URL health and observability platform. Monitors URLs on a schedule, records status and latency, aggregates uptime, and exposes a real-time dashboard with structured logging and request tracing.
+Watches URLs on a schedule, records whether they are up and how fast they respond, and shows it on a dashboard. Logs are JSON and every request can be traced across processes.
 
 ![Dashboard](docs/screenshots/dashboard.png)
 
 ## Live demo
 
-| | |
-| --- | --- |
-| App | <!-- TODO: Vercel URL --> `https://REPLACE-ME.vercel.app` |
-| API health | <!-- TODO: Railway URL --> `https://REPLACE-ME.up.railway.app/health` |
+- App: <!-- TODO: Vercel URL --> `https://REPLACE-ME.vercel.app`
+- API health: <!-- TODO: Railway URL --> `https://REPLACE-ME.up.railway.app/health`
 
-Sign in as `demo@lookout.dev` / `demo1234` for the seeded dataset (50 URLs, 100k
-checks over 7 days), or `admin@lookout.dev` / `admin1234` for the admin view with
-the metrics page. Signing up creates an empty account; **Try the sample** fills it.
+Sign in as `demo@lookout.dev` / `demo1234` to see the seeded data: 20 real public URLs with 40k checks over 7 days. Sign in as `admin@lookout.dev` / `admin1234` to also see the metrics page. A new signup starts empty, and **Try the sample** fills it.
 
-The frontend is on Vercel and the api and worker are on Railway, with Postgres
-and Redis alongside them. Deployment steps are in [docs/DEPLOY.md](docs/DEPLOY.md).
+The frontend runs on Vercel. The api and worker run on Railway with Postgres and Redis. See [docs/DEPLOY.md](docs/DEPLOY.md).
 
 ## Quick start
 
-Prerequisites: Docker and Docker Compose.
+You need Docker and Docker Compose.
 
 ```bash
 cp .env.example .env
@@ -30,18 +25,20 @@ openssl rand -base64 32          # paste the output into JWT_SECRET in .env
 docker compose up --build -d
 ```
 
-Open <http://localhost:8080>, sign up, and click **Try the sample**. Within a few seconds the table shows the three sample URLs checked: two UP, one DOWN with a 404.
+Open <http://localhost:8080>, sign up, and click **Try the sample**. After a few seconds the table shows the three sample URLs: two UP, one DOWN with a 404.
 
-Optional — seed 100k checks across 50 URLs for the scale demo (about 6 seconds):
+Optional. Seed 20 real public URLs with seven days of history, 40,320 checks, in about 3 seconds:
 
 ```bash
 docker compose exec api node dist/scripts/seed.js
 # re-run over existing demo data with: ... seed.js --force
 ```
 
-It creates `demo@lookout.dev` / `demo1234` (USER) and `admin@lookout.dev` / `admin1234` (ADMIN). To make the admin view reachable for accounts you create yourself, set `ADMIN_EMAILS` in `.env` before starting.
+This creates `demo@lookout.dev` / `demo1234` (USER) and `admin@lookout.dev` / `admin1234` (ADMIN). To get the admin view on an account you create yourself, set `ADMIN_EMAILS` in `.env` before starting.
 
-Local development without app containers, in three terminals:
+The seeded URLs are real, and their fake history is written at the same 5 minute spacing the worker uses. So once checks start running, live results match the history instead of contradicting it. Sixteen hosts are healthy. Four always fail: a 404, a 503, an expired certificate, and a domain that does not exist.
+
+To run without app containers, in three terminals:
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres redis
@@ -61,9 +58,9 @@ cd frontend && npm install && npm run dev      # http://localhost:5173, proxies 
 | UI | React SPA: dashboard with live summary and table, per-URL detail with charts, admin metrics | `frontend/src/pages/` |
 | Logging | pino structured JSON, per-request levels, correlation IDs spanning API and worker | `backend/src/logger.ts`, `backend/src/app.ts` |
 
-Bonuses implemented: role-based access (USER/ADMIN), Redis-backed queue with background workers, real-time dashboard via polling, structured JSON logs, per-route log levels, correlation IDs across processes, an admin metrics endpoint, retries with exponential backoff, Dockerized deployment behind nginx, GitHub Actions CI, auth rate limiting, and uptime/percentile aggregation.
+Extras built: user and admin roles, a Redis queue with background workers, a live dashboard by polling, JSON logs, per-route log levels, request IDs that carry across processes, an admin metrics endpoint, retries with backoff, Docker deployment behind nginx, GitHub Actions CI, rate limiting on auth, and uptime and percentile numbers.
 
-Not built: WebSockets (polling instead), email or webhook alerting, and multi-tenancy beyond per-user ownership with an admin override.
+Not built: WebSockets, email or webhook alerts, and any tenancy model beyond per-user ownership with an admin override.
 
 ## Architecture
 
@@ -95,50 +92,50 @@ Not built: WebSockets (polling instead), email or webhook alerting, and multi-te
                                             └────────────────────────┘
 ```
 
-- The api and worker are separate processes built from the same image, with the command overridden. The API never constructs a `Worker`, so a slow site cannot affect HTTP latency, and checks keep running while the API restarts.
-- Each URL gets one BullMQ job scheduler keyed `url:<id>`, firing at that URL's interval.
-- Postgres is the source of truth for what should be scheduled. On boot the worker reconciles: every active URL gets a scheduler, and any scheduler without a matching active URL is removed. A flushed Redis or a crash mid-write heals on the next start.
-- Manual checks ("Check now") go through the same queue with priority 1, so a person waiting jumps ahead of the scheduled backlog. The API waits up to 15s for the result and returns 202 with a job id if the worker is slower than that.
-- A second `maintenance` queue runs the hourly rollup every 5 minutes and retention pruning every 24 hours.
-- A DOWN result is a **successful** job. Only infrastructure faults (Postgres unreachable, URL row deleted) throw and retry with exponential backoff. Retrying a down site would hammer it three times per interval and write three DOWN rows, inflating the outage in the history.
-- Latency is measured as time-to-headers: `fetch` settles when response headers arrive, the timer stops, and the body is cancelled without reading it. That measures server responsiveness rather than page weight.
+- The api and worker are two processes from the same image, started with different commands. The api never runs a worker, so a slow site cannot slow down HTTP requests, and checks keep running while the api restarts.
+- Each URL gets one BullMQ scheduler, keyed `url:<id>`, firing at that URL's interval.
+- Postgres decides what should be scheduled. On boot the worker adds a scheduler for every active URL and deletes any scheduler whose URL is gone. A wiped Redis or a crash halfway through a write fixes itself on the next start. The seed script does the same reconcile when it finishes.
+- "Check now" uses the same queue at priority 1, so a waiting person goes ahead of the scheduled backlog. The api waits up to 15s, then returns 202 with a job id.
+- A second `maintenance` queue rolls up stats every 5 minutes and deletes old checks every 24 hours.
+- A DOWN result is a **successful** job. Only real faults throw and retry with backoff, such as Postgres being unreachable or the URL row being deleted. If a down site counted as a failed job, BullMQ would retry it three times per interval, hammering a site that is already struggling and writing three DOWN rows for one outage.
+- Response time is measured up to the response headers. `fetch` resolves when headers arrive, the timer stops there, and the body is thrown away unread. That measures how fast the server answers, not how big the page is.
 
 ## Data model and query design
 
 Four tables: `users`, `urls`, `checks`, `url_stats_hourly`.
 
-`checks` is the table that grows without bound, so its primary key is a `bigint` identity rather than a UUID, and it carries `(url_id, checked_at DESC)` — the shape of every read path: latest N checks for one URL, and the latest single check per URL. A second index on `checked_at` alone serves retention pruning and rollup windows.
+`checks` is the one that grows forever, so its key is a `bigint` counter rather than a UUID. Its index is `(url_id, checked_at DESC)`, which is the shape of both reads: the last N checks for one URL, and the single latest check per URL. A second index on `checked_at` alone is used for deleting old rows and for rollup windows.
 
-`url_stats_hourly` exists so that dashboard reads stay flat as history accumulates. The 24h window reads raw `checks` in 15-minute buckets, because that resolution cannot be recovered from hourly aggregates. The 7d and 30d windows read only `url_stats_hourly` and never touch raw checks. Raw checks are pruned after 7 days (`CHECK_RETENTION_DAYS`) in batches of 10,000; hourly aggregates are kept.
+`url_stats_hourly` keeps dashboard reads fast as history piles up. The 24h view reads raw `checks` in 15 minute buckets, because hourly rows cannot give that detail. The 7d and 30d views read only `url_stats_hourly` and never touch raw checks. Raw checks are deleted after 7 days (`CHECK_RETENTION_DAYS`) in batches of 10,000. The hourly rows are kept.
 
 ### Latest check per URL
 
-The dashboard needs the newest check for every URL, which is the hottest read in the app. The obvious formulation is `DISTINCT ON (url_id) ... ORDER BY url_id, checked_at DESC`. It *does* use `checks_url_id_checked_at_idx`, but only to read it in order: it walks every entry for the scoped URLs and discards all but the first of each group. Measured at 60 URLs / 120k checks:
+The dashboard needs the newest check for every URL. It is the most frequent read in the app. The obvious way is `DISTINCT ON (url_id) ... ORDER BY url_id, checked_at DESC`. That does use `checks_url_id_checked_at_idx`, but only to read it in order. It walks every entry for those URLs and throws away all but the first of each group. Measured at 60 URLs and 120k checks:
 
 | Query | Time | Index rows scanned | Buffers |
 | --- | --- | --- | --- |
 | `DISTINCT ON (url_id)` | 50.4 ms | 120,009 | 121,237 |
 | `LEFT JOIN LATERAL ... LIMIT 1` | 0.51 ms | 60 seeks | 240 |
 
-The lateral form is used. Its cost scales with the number of URLs, not the number of checks. `EXPLAIN (ANALYZE, BUFFERS)` on the seeded dataset (100,007 checks, 53 URLs):
+The lateral version is the one used. Its cost grows with the number of URLs, not the number of checks. `EXPLAIN (ANALYZE, BUFFERS)` on the seeded data plus a few test URLs, 40,391 checks and 27 URLs:
 
 ```
-Nested Loop Left Join  (actual time=0.058..0.670 rows=50 loops=1)
-  Buffers: shared hit=202
-  ->  Seq Scan on urls u  (rows=50)
-  ->  Limit  (actual time=0.013..0.013 rows=1 loops=50)
+Nested Loop Left Join  (actual time=0.031..0.176 rows=20 loops=1)
+  Buffers: shared hit=82
+  ->  Seq Scan on urls u  (rows=20)
+  ->  Limit  (actual time=0.008..0.008 rows=1 loops=20)
         ->  Index Scan using checks_url_id_checked_at_idx on checks c
               Index Cond: (url_id = u.id)
-Execution Time: 0.698 ms
+Execution Time: 0.200 ms
 ```
 
-Measured at 100k checks: dashboard summary 45 ms; per-URL stats 24h 12 ms, 7d 13 ms, 30d 10 ms. The seed writes 100k rows in about 5s (`createMany`, batches of 5,000) and rolls up 169 hours into roughly 8,400 aggregate rows in under 350 ms.
+On that same data: dashboard summary 6-11 ms, per-URL stats 24h 14 ms, 7d 9 ms, 30d 8 ms. The seed writes 40,320 rows in about 1.9s using `createMany` in batches of 5,000, then rolls up 169 hours into 3,394 rows in under 200 ms. The table above comes from a separate 120k row test, which is where the index design was checked.
 
 ![URL detail](docs/screenshots/url-detail.png)
 
 ## Health check engine
 
-A check is **UP** when the final response status (after following redirects) is 200–299. Anything else is **DOWN**, with the status code recorded. Thrown errors are classified from `err.cause.code`, which is where undici puts the underlying socket failure:
+A check is **UP** when the final status, after redirects, is 200 to 299. Anything else is **DOWN** and the status code is saved. Thrown errors are sorted by `err.cause.code`, which is where undici puts the real socket error.
 
 | Error type | Verified against |
 | --- | --- |
@@ -150,19 +147,21 @@ A check is **UP** when the final response status (after following redirects) is 
 | `TIMEOUT` | local server that never responds, with `timeoutMs: 500` |
 | `UNKNOWN` | anything unrecognised, with the code kept in the message |
 
-`http://127.0.0.1:1` reports `INVALID_URL`, not `CONN_REFUSED`. Port 1 is on the WHATWG fetch blocked-ports list, so undici rejects the request before opening a socket — nothing was refused by a peer, and the error carries no code. Reporting it as a connection refusal would be a lie about what happened.
+Any code containing `CERT` counts as a TLS error, so self-signed and untrusted-root certificates are caught too, not just expired ones.
 
-Concurrency: the worker processes up to `CHECK_CONCURRENCY` (default 10) jobs at once. The API's batch path uses a small inline semaphore with the same cap rather than a dependency. Seven real checks against live sites completed concurrently in about 800 ms.
+`http://127.0.0.1:1` reports `INVALID_URL`, not `CONN_REFUSED`. Port 1 is on the fetch spec's blocked ports list, so undici refuses before opening a socket. Nothing was refused by a server, and the error has no code, so calling it a refused connection would be wrong.
 
-Tests: 25 unit tests, no network access. 20 cover every branch of the error classifier using hand-built error objects with the right `name`/`cause.code`; 5 cover the checker against a local HTTP server on a random port with `/ok`, `/slow`, `/500`, and `/redirect` routes, plus a bound-then-released port for a genuine ECONNREFUSED.
+The worker runs up to `CHECK_CONCURRENCY` (default 10) checks at once. The api's batch path uses a small semaphore written inline with the same limit, instead of adding a dependency. Seven real checks against live sites finished together in about 800 ms.
+
+Tests: 28 unit tests, none of which touch the network. 23 cover the error classifier using fake error objects with the right `name` and `cause.code`. 5 cover the checker against a local HTTP server on a random port with `/ok`, `/slow`, `/500`, and `/redirect`, plus a port that is opened and closed again to get a real ECONNREFUSED.
 
 ![Sample input](docs/screenshots/sample-input.png)
 
 ## Observability
 
-Logs are pino JSON on stdout (pretty-printed only in development, via `LOG_PRETTY`). Request logs are `info`, 4xx are `warn`, 5xx and thrown errors are `error`, and `/health` is `debug` so the container healthcheck polling every 10 seconds does not drown out everything else.
+Logs are pino JSON on stdout. They are only pretty printed in development, via `LOG_PRETTY`. Request logs are `info`, 4xx is `warn`, 5xx and thrown errors are `error`. `/health` logs at `debug` so the healthcheck hitting it every 10 seconds does not bury everything else.
 
-Every request gets an `x-request-id`: the incoming header is honoured if present, otherwise one is minted, and it is echoed back on the response. The request logger is held in an `AsyncLocalStorage`, so `getLogger()` anywhere in the service layer returns a child already carrying `reqId` without threading a logger through every signature. Manual jobs carry the `reqId` in their job data, and the worker rebuilds the same context — so one trace spans two processes:
+Every request gets an `x-request-id`. An incoming header is kept if there is one, otherwise a new id is made, and it is sent back on the response. The request logger lives in an `AsyncLocalStorage`, so `getLogger()` anywhere in the service layer already carries `reqId` and no function needs a logger argument. Manual jobs carry the `reqId` in their job data and the worker rebuilds the same context, so one trace covers both processes:
 
 ```json
 api    {"level":30,"reqId":"trace-demo-1788472726","jobId":"7","urlId":"fc61f728…","trigger":"manual","msg":"check job enqueued"}
@@ -170,47 +169,45 @@ worker {"level":40,"reqId":"trace-demo-1788472726","jobId":"7","trigger":"manual
 api    {"level":30,"reqId":"trace-demo-1788472726","res":{"statusCode":200},"responseTime":160,"msg":"request completed"}
 ```
 
-`GET /api/metrics` (ADMIN only) reports last-hour check totals, failures, failure rate, average and p95 latency, checks per minute, BullMQ queue depths (waiting/active/completed/failed/delayed), and process uptime and memory.
+`GET /api/metrics`, admin only, returns last hour check totals, failures, failure rate, average and p95 response time, checks per minute, queue depths (waiting, active, completed, failed, delayed), and process uptime and memory.
 
 ![Admin metrics](docs/screenshots/admin-metrics.png)
 
 ## Security notes
 
-- Passwords hashed with bcryptjs at cost 12. bcryptjs (pure JS) rather than native bcrypt so the image needs no compile toolchain.
-- Login runs a bcrypt comparison against a fixed dummy hash when the email is not found, so response timing does not reveal whether an account exists. Wrong email and wrong password return the same 401.
-- JWTs are verified and the user is re-loaded from the database on every authenticated request, so a deleted user cannot keep using a valid token.
-- A URL owned by another user returns **404, not 403**, so the API does not leak which URLs exist.
-- Rate limiting on `/api/auth` (20 requests per 15 minutes per IP), `helmet` security headers, and CORS restricted to a configured origin.
-- URL normalization rejects embedded credentials (`user:pass@`) and any scheme other than http/https.
-- The api and worker containers run as a non-root user (`USER node`). Only the frontend publishes a port; Postgres, Redis, and the API stay on the internal network.
-- `passwordHash` is never returned by any endpoint; responses go through a `toPublicUser()` helper.
+- Passwords are hashed with bcryptjs at cost 12. bcryptjs is pure JavaScript, so the image needs no build tools.
+- If the email is not found, login still runs a bcrypt compare against a fixed dummy hash. Response time therefore does not reveal whether an account exists. A wrong email and a wrong password both return the same 401.
+- The JWT is verified and the user is loaded from the database on every request, so a deleted user cannot keep using an old token.
+- A URL owned by someone else returns **404, not 403**, so the api does not reveal which URLs exist.
+- Rate limit on `/api/auth` of 20 requests per 15 minutes per IP, `helmet` headers, and CORS limited to one configured origin.
+- URL cleanup rejects credentials in the URL (`user:pass@`) and any scheme other than http or https.
+- The api and worker containers run as a non-root user (`USER node`). Only the frontend exposes a port. Postgres, Redis, and the api stay on the internal network.
+- `passwordHash` is never in a response. Everything goes through a `toPublicUser()` helper.
 
-Tradeoff: the JWT is stored in `localStorage` and sent as a bearer token. That is simple and immune to CSRF, but it is readable by any XSS on the page. In production I would move to an httpOnly, Secure, SameSite cookie with a short-lived access token and refresh-token rotation, which needs CSRF protection in exchange.
+Tradeoff: the JWT sits in `localStorage` and is sent as a bearer token. That is simple and cannot be hit by CSRF, but any XSS on the page can read it. For production I would switch to an httpOnly, Secure, SameSite cookie with a short-lived token and refresh rotation, which then needs CSRF protection.
 
 ## Design decisions and tradeoffs
 
-- **Prisma 6, pinned.** Prisma 7 removes `url` from the schema datasource and requires driver adapters plus a config file; the npm `latest` tag was an 8.0 release candidate. Pinned to the stable 6.x line rather than reworking the data layer around a brand-new major.
-- **`relationJoins` preview left off.** Prisma's default strategy issues one extra batched query per page for `lastCheck`, which is not N+1 and is good enough. Enabling a preview feature for a true lateral join was not worth the stability cost.
-- **Node's native `fetch`, no axios.** Node 20 has it built in; one less dependency, and undici's error causes are exactly what the classifier needs.
-- **GET, not HEAD.** Many servers reject or mishandle HEAD and would be reported down while perfectly healthy. The body is cancelled immediately, so the cost is one round trip either way.
-- **Polling, not WebSockets.** A 5-second poll meets the "real-time dashboard" requirement and avoids reconnect logic, backpressure, and connection-state bugs. `usePolling` pauses while the tab is hidden.
-- **BullMQ, not `setInterval`.** Gives persistence across restarts, retries with backoff, priorities, and a scheduler model that survives a crash — all of which a hand-rolled timer loop would have to reimplement.
-- **The first check on create was removed.** `upsertJobScheduler` fires its first job immediately, so explicitly enqueuing a manual check on top wrote two near-identical rows per URL.
-- **Tailwind and recharts only.** No component or form library; the UI is small enough that a design system would be more code than it saves.
-- **Retention deletes in batches of 10,000.** A single `DELETE` over a neglected table holds locks and bloats WAL; batching keeps each statement short.
-- **The Prisma CLI is a runtime dependency.** The api container runs `prisma migrate deploy` on startup, so the CLI has to survive `npm ci --omit=dev`.
+- **Prisma 6, pinned.** Prisma 7 drops `url` from the schema datasource and wants driver adapters and a config file. The npm `latest` tag was an 8.0 release candidate. I stayed on stable 6.x instead of rebuilding the data layer around a brand new major.
+- **`relationJoins` preview left off.** Prisma's default runs one extra batched query per page for `lastCheck`. That is not N+1 and is fast enough. Turning on a preview feature was not worth the risk.
+- **Node's built-in `fetch`, not axios.** Node 20 already has it. One less dependency, and undici's error causes are exactly what the classifier reads.
+- **GET, not HEAD.** Plenty of servers reject or mishandle HEAD and would look down while being fine. The body is cancelled straight away, so either way it is one round trip.
+- **Polling, not WebSockets.** A 5 second poll is enough for a live dashboard and avoids reconnects, backpressure, and connection state bugs. `usePolling` stops while the tab is hidden.
+- **BullMQ, not `setInterval`.** It survives restarts, retries with backoff, supports priorities, and has a scheduler model that recovers after a crash. A hand-written timer loop would have to rebuild all of that.
+- **The extra first check was removed.** `upsertJobScheduler` already fires once immediately, so adding a manual check on top wrote two almost identical rows for every new URL.
+- **Tailwind and recharts only.** No component or form library. The UI is small enough that a design system would cost more code than it saves.
+- **Old checks are deleted 10,000 at a time.** One big `DELETE` on a neglected table holds locks and bloats the WAL. Small batches keep each statement short.
+- **The Prisma CLI ships in the runtime image.** The api container runs `prisma migrate deploy` at startup, so the CLI has to survive `npm ci --omit=dev`.
 
 ## How AI was used
 
-I planned this in a conversation with Claude: we settled the stack, then wrote a 10-step plan with one detailed prompt per step — fixed versions, explicit scope limits, and a verification list to run before each commit. Claude Code implemented each step; I reviewed the diff, ran the verification, made the commit, and only then moved on.
+I used Claude to plan lookout and write code. The plan was mine to own: which stack, which versions, how the data model should look, what each step could and could not touch, and what had to be proven with real queries and requests before I committed. Claude helped me write code against those prompts. I read every diff, ran every check, and committed myself.
 
-It earned its place on measurements, not typing. In step 7 I specified `DISTINCT ON` for the latest-check-per-URL query and asked it to confirm the index was used. It benchmarked both forms, showed `DISTINCT ON` scanning all 120,009 index rows in 50.4 ms against 0.51 ms for a lateral join, and switched the implementation. A comment I asked for in step 4 claimed Prisma compiled a relation include into a lateral join; the query log showed a batched `IN`, so it was corrected rather than left to mislead. It also found that `http://127.0.0.1:1` can never report CONN_REFUSED (port 1 is on the fetch blocked-ports list), that `upsertJobScheduler` fires immediately and was causing a duplicate first check, and that an nginx `proxy_pass` with a trailing slash would strip the `/api` prefix and 404 every route.
+Where it earned its place was measurement. I had asked for DISTINCT ON to get the latest check per URL. It benchmarked both and showed the lateral join was 100x cheaper at 120k rows, so I took that. It also flagged that upsertJobScheduler fires immediately, which was writing a duplicate first check, and that a trailing slash in the nginx proxy would have stripped /api from every route.
 
-The plan constrained it as often: pinning Prisma 6 and React 18 against newer defaults, stripping generator scaffolding, holding each step to its scope.
+Where I overrode it: it reached for Prisma 8 rc and React 19, I pinned 6 and 18. It scaffolded lint tooling I had not asked for, I removed it. It suggested skipping verification steps to move faster, I did not.
 
-Three bugs surfaced only because verification was mandatory: a `z.coerce.boolean()` on `LOG_PRETTY` that made `"false"` true and crashed the production image on boot; a missing `ORDER BY` tiebreaker that reshuffled the dashboard when a row was paused; and a chart that drew nothing for a single-point series.
-
-One honest failure: in step 7 a cleanup query run during verification was too broad and deleted real rows. Nothing shipped, but it is why seed data is kept separate from what a demo runs against.
+Three bugs only surfaced because I insisted on verifying against a production build: a boolean env flag parsed backwards, a missing sort tiebreaker, and a chart that drew nothing with a single point.
 
 ## Project structure
 
@@ -237,7 +234,7 @@ frontend/src/
 
 ## API reference
 
-All routes are prefixed `/api`. Auth is a bearer token: `Authorization: Bearer <token>`.
+Every route starts with `/api`. Auth is a bearer token: `Authorization: Bearer <token>`.
 
 | Method | Path | Auth | Description |
 | --- | --- | --- | --- |

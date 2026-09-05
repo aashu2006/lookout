@@ -6,7 +6,7 @@ Watches URLs on a schedule, records whether they are up and how fast they respon
 
 ## Live demo
 
-- App: <!-- TODO: Vercel URL --> `https://REPLACE-ME.vercel.app`
+- App: https://lookout-dusky.vercel.app
 - API health: https://lookout-production-783d.up.railway.app/health
 
 Sign in as `demo@lookout.dev` / `demo1234` to see the seeded data: 20 real public URLs with 40k checks over 7 days. Sign in as `admin@lookout.dev` / `admin1234` to also see the metrics page. A new signup starts empty, and **Try the sample** fills it.

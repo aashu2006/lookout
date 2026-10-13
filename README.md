@@ -7,11 +7,11 @@ Watches URLs on a schedule, records whether they are up and how fast they respon
 ## Live demo
 
 - App: https://lookout-dusky.vercel.app
-- API health: https://lookout-production-783d.up.railway.app/health
+- API health: https://lookout-api-yj71.onrender.com/health
 
 Sign in as `demo@lookout.dev` / `demo1234` to see the seeded data: 20 real public URLs with 40k checks over 7 days. Sign in as `admin@lookout.dev` / `admin1234` to also see the metrics page. A new signup starts empty, and **Try the sample** fills it.
 
-The frontend runs on Vercel. The api and worker run on Railway with Postgres and Redis. See [docs/DEPLOY.md](docs/DEPLOY.md).
+The frontend runs on Vercel. The api and worker run in one free container on Render with Render Key Value for Redis, and Postgres is on Supabase. See [docs/DEPLOY.md](docs/DEPLOY.md).
 
 ## Quick start
 

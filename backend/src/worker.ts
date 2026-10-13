@@ -2,6 +2,10 @@
 // jobs — it never constructs a Worker — so HTTP latency is never affected by a
 // slow site, and checks keep running even while the API is redeploying. Run it
 // with `npm run worker` (dev) or `npm run start:worker` (built).
+//
+// The one exception is EMBED_WORKER=true, where server.ts imports this module
+// into the api process. That gives up the isolation above and exists only for
+// hosts with a single free container and no background workers.
 import { Queue, Worker } from "bullmq";
 import "./bigintJson.js";
 import { config } from "./config.js";
@@ -163,6 +167,20 @@ await reconcileMaintenanceSchedules();
 // current immediately rather than after the first scheduled rollup.
 await rollupRecent();
 
+/** Closes everything this module opened, without exiting. Exported so the api
+ * can run it as part of its own shutdown when the worker is embedded. */
+export async function closeWorker(): Promise<void> {
+  // close() waits for in-flight jobs to finish before releasing the lock.
+  await worker.close();
+  await maintenanceWorker.close();
+  await maintenanceQueue.close();
+  await queueEvents.close();
+  await connection.quit();
+  await maintenanceConnection.quit();
+  await redis.quit();
+  await prisma.$disconnect();
+}
+
 let shuttingDown = false;
 
 async function shutdown(signal: string): Promise<void> {
@@ -173,15 +191,7 @@ async function shutdown(signal: string): Promise<void> {
   logger.info({ signal }, "worker shutting down");
 
   try {
-    // close() waits for in-flight jobs to finish before releasing the lock.
-    await worker.close();
-    await maintenanceWorker.close();
-    await maintenanceQueue.close();
-    await queueEvents.close();
-    await connection.quit();
-    await maintenanceConnection.quit();
-    await redis.quit();
-    await prisma.$disconnect();
+    await closeWorker();
     logger.info("worker shutdown complete");
     process.exit(0);
   } catch (err) {
@@ -190,5 +200,9 @@ async function shutdown(signal: string): Promise<void> {
   }
 }
 
-process.on("SIGINT", () => void shutdown("SIGINT"));
-process.on("SIGTERM", () => void shutdown("SIGTERM"));
+// Embedded, the api owns the signals: it stops accepting requests first and
+// then calls closeWorker(). Two sets of handlers would race to process.exit().
+if (!config.embedWorker) {
+  process.on("SIGINT", () => void shutdown("SIGINT"));
+  process.on("SIGTERM", () => void shutdown("SIGTERM"));
+}

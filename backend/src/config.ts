@@ -33,6 +33,13 @@ const envSchema = z.object({
     .string()
     .default("false")
     .transform((value) => ["1", "true", "yes", "on"].includes(value.trim().toLowerCase())),
+  // Runs the worker inside the api process instead of as its own service. For
+  // hosts that give you a single free container (Render). Parsed like
+  // LOG_PRETTY, for the same reason.
+  EMBED_WORKER: z
+    .string()
+    .default("false")
+    .transform((value) => ["1", "true", "yes", "on"].includes(value.trim().toLowerCase())),
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   JWT_SECRET: z.string().min(32, "JWT_SECRET must be at least 32 characters"),
   JWT_EXPIRES_IN: z.string().default("7d"),
@@ -70,6 +77,7 @@ export const config = {
   redisFamily: env.REDIS_FAMILY,
   logLevel: env.LOG_LEVEL,
   logPretty: env.LOG_PRETTY,
+  embedWorker: env.EMBED_WORKER,
   nodeEnv: env.NODE_ENV,
   isDev: env.NODE_ENV === "development",
   jwtSecret: env.JWT_SECRET,

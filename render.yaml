@@ -1,0 +1,48 @@
+# Render Blueprint: the api (with the worker embedded) and Redis, both on the
+# free plan. Postgres is not here because Render's free Postgres is deleted
+# after 30 days; DATABASE_URL points at Supabase instead. See docs/DEPLOY.md.
+services:
+  - type: keyvalue
+    name: lookout-redis
+    plan: free
+    region: singapore
+    # BullMQ needs every key kept. Any evicting policy would drop jobs.
+    maxmemoryPolicy: noeviction
+    # Empty list: reachable only from other services in this Render account.
+    ipAllowList: []
+
+  - type: web
+    name: lookout-api
+    runtime: docker
+    plan: free
+    region: singapore
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    dockerCommand: sh ./start-hosted.sh
+    healthCheckPath: /health
+    buildFilter:
+      paths:
+        - backend/**
+        - render.yaml
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: lookout-redis
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: EMBED_WORKER
+        value: "true"
+      - key: SEED_ON_BOOT
+        value: "true"
+      - key: ADMIN_EMAILS
+        value: admin@lookout.dev
+      - key: CORS_ORIGIN
+        value: https://lookout-dusky.vercel.app
+      - key: LOG_PRETTY
+        value: "false"
+      - key: NODE_ENV
+        value: production

@@ -41,6 +41,26 @@ server.on("error", (err) => {
   process.exit(1);
 });
 
+// EMBED_WORKER runs the worker in this process, for hosts that offer one free
+// container and no background workers. It is started after listen() and not
+// awaited: worker.ts reconciles schedulers against Postgres and Redis at the top
+// level, and the port must not wait on that. A worker that cannot start is
+// fatal, the same as it is for the standalone process, so the platform restarts
+// the container instead of leaving an api up that silently checks nothing.
+let closeWorker: (() => Promise<void>) | undefined;
+
+if (config.embedWorker) {
+  void import("./worker.js")
+    .then((worker) => {
+      closeWorker = worker.closeWorker;
+      logger.info("embedded worker started");
+    })
+    .catch((err: unknown) => {
+      logger.fatal({ err }, "embedded worker failed to start");
+      process.exit(1);
+    });
+}
+
 function shutdown(signal: string): void {
   logger.info({ signal }, "shutting down");
   server.close((err) => {
@@ -48,8 +68,14 @@ function shutdown(signal: string): void {
       logger.error({ err }, "error during shutdown");
       process.exit(1);
     }
-    logger.info("shutdown complete");
-    process.exit(0);
+    // Requests have drained by now, so in-flight jobs can finish and the
+    // shared connections can go.
+    void (closeWorker?.() ?? Promise.resolve())
+      .catch((closeErr: unknown) => logger.error({ err: closeErr }, "error closing worker"))
+      .finally(() => {
+        logger.info("shutdown complete");
+        process.exit(0);
+      });
   });
 }
 

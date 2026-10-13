@@ -30,10 +30,12 @@ COPY prisma ./prisma
 RUN npx prisma generate
 
 COPY --from=build /app/dist ./dist
+COPY start-hosted.sh ./
 
 USER node
 
 EXPOSE 4000
 
 # The worker runs from this same image with the command overridden in compose.
+# Render overrides it with start-hosted.sh (see render.yaml).
 CMD ["node", "dist/server.js"]

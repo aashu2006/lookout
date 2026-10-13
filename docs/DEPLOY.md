@@ -114,6 +114,63 @@ own and no restart is needed. Its log line reads `reconciled job schedulers`.
 
 ---
 
+## Part 1, free alternative: Render and Supabase
+
+Railway has no free plan once the trial ends. This setup costs nothing and needs
+no card: the api on Render's free web service, Redis on Render's free Key Value,
+Postgres on Supabase. `render.yaml` at the repo root describes the Render side.
+
+Two things differ from Railway:
+
+- Render has no free background workers, so the worker runs inside the api
+  process (`EMBED_WORKER=true`). A slow check can now share a CPU with a request.
+- Render's free plan has no shell, so `backend/start-hosted.sh` runs the
+  migrations and, with `SEED_ON_BOOT=true`, the seed before starting the api. The
+  seed skips itself once the demo user exists.
+
+### 1. Supabase (Postgres)
+
+1. [supabase.com](https://supabase.com) → **New project**. Region **Southeast
+   Asia (Singapore)**, the same region `render.yaml` uses. Save the database
+   password.
+2. **Connect** → **Session pooler** → copy the URI. It looks like
+   `postgresql://postgres.<ref>:<password>@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres`.
+3. Put the password in and add `?connection_limit=5` to the end.
+
+Use the session pooler, not the direct connection and not the transaction
+pooler. The direct host is IPv6 only and Render cannot reach it. The transaction
+pooler on port 6543 breaks `prisma migrate deploy`. The connection limit keeps
+Prisma under the pooler's 15 connection cap.
+
+### 2. Render (api, worker, Redis)
+
+1. [render.com](https://render.com) → **New** → **Blueprint** → pick this
+   repository. It reads `render.yaml` and proposes `lookout-api` and
+   `lookout-redis`.
+2. It asks for `DATABASE_URL`. Paste the Supabase string from step 1.
+3. **Apply**. The first deploy builds the image, migrates, seeds, and starts.
+   Watch the log for `seed complete` and `embedded worker started`.
+4. Copy the service URL, something like `https://lookout-api.onrender.com`, and
+   use it as the rewrite destination in Part 2.
+
+### 3. Keep it awake
+
+A free Render service sleeps after 15 minutes without an incoming request, and a
+sleeping worker checks nothing. Add a free monitor at
+[uptimerobot.com](https://uptimerobot.com) that requests
+`https://<render-domain>/health` every 5 minutes. One service running all month
+fits inside Render's 750 free hours.
+
+### Limits
+
+- Free Key Value has no persistence. If Render restarts it, the schedulers are
+  gone until the api restarts and reconciles them. **Manual Deploy → Restart
+  service** fixes it.
+- Supabase pauses a free project after a week with no activity. The worker's
+  checks count as activity, so this only happens if the api has been down.
+
+---
+
 ## Part 2: Vercel (frontend)
 
 ### 1. Point the rewrite at Railway

@@ -109,10 +109,9 @@ export function UrlDetail() {
   const formatTick = (value: string) =>
     window_ === "24h" ? formatClock(value) : formatDateTime(value);
   const series = stats.data?.series ?? [];
-  // A line between two points needs two points: with only a handful of buckets
-  // (a URL added minutes ago) the chart would otherwise look empty, so show
-  // markers when the series is short and hide them once it gets dense.
-  const showDots = series.length <= 8;
+  // A line needs two points, so with only a few checks (a URL added minutes
+  // ago) show dots, otherwise the chart looks empty. Empty slots don't count.
+  const showDots = series.filter((point) => point.avgMs != null).length <= 8;
 
   return (
     <div className="space-y-6">

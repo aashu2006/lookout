@@ -29,7 +29,7 @@ statsRouter.get(
     }
 
     const { window } = res.locals.query as UrlStatsQuery;
-    res.status(200).json(await getUrlStats(url.id, window));
+    res.status(200).json(await getUrlStats(url, window));
   }),
 );
 

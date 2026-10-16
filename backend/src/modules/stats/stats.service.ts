@@ -1,15 +1,8 @@
-import { Prisma } from "@prisma/client";
+import { Prisma, type Url } from "@prisma/client";
 import { prisma } from "../../db.js";
+import { fillSeries, slotSizeMs, type SeriesPoint } from "./series.js";
 
 export type StatsWindow = "24h" | "7d" | "30d";
-
-export interface SeriesPoint {
-  t: Date;
-  totalChecks: number;
-  failures: number;
-  avgMs: number | null;
-  p95Ms: number | null;
-}
 
 export interface UrlStats {
   window: StatsWindow;
@@ -56,13 +49,24 @@ function uptimePctOf(totalChecks: number, failures: number): number | null {
   return round2(((totalChecks - failures) / totalChecks) * 100);
 }
 
-export async function getUrlStats(urlId: string, window: StatsWindow): Promise<UrlStats> {
-  const since = new Date(Date.now() - WINDOW_MS[window]);
+/** Slot size each window's query returns, before fillSeries widens it. */
+const BASE_SLOT_MS: Record<StatsWindow, number> = {
+  "24h": 15 * 60 * 1000,
+  "7d": 60 * 60 * 1000,
+  "30d": 60 * 60 * 1000,
+};
 
-  const [aggregate, series] =
+export async function getUrlStats(
+  url: Pick<Url, "id" | "intervalSeconds" | "createdAt">,
+  window: StatsWindow,
+): Promise<UrlStats> {
+  const now = new Date();
+  const since = new Date(now.getTime() - WINDOW_MS[window]);
+
+  const [aggregate, points] =
     window === "24h"
-      ? await Promise.all([aggregateFromChecks(urlId, since), seriesFromChecks(urlId, since)])
-      : await Promise.all([aggregateFromRollup(urlId, since), seriesFromRollup(urlId, since)]);
+      ? await Promise.all([aggregateFromChecks(url.id, since), seriesFromChecks(url.id, since)])
+      : await Promise.all([aggregateFromRollup(url.id, since), seriesFromRollup(url.id, since)]);
 
   return {
     window,
@@ -71,8 +75,31 @@ export async function getUrlStats(urlId: string, window: StatsWindow): Promise<U
     uptimePct: uptimePctOf(aggregate.totalChecks, aggregate.failures),
     avgMs: aggregate.avgMs === null ? null : round2(aggregate.avgMs),
     p95Ms: aggregate.p95Ms,
-    series,
+    series: withGaps(points, url, window, since, now),
   };
+}
+
+function withGaps(
+  points: SeriesPoint[],
+  url: Pick<Url, "intervalSeconds" | "createdAt">,
+  window: StatsWindow,
+  since: Date,
+  now: Date,
+): SeriesPoint[] {
+  if (points.length === 0) {
+    return [];
+  }
+  const slotMs = slotSizeMs(BASE_SLOT_MS[window], url.intervalSeconds);
+  // Start at the first slot fully inside the window, otherwise the edge slot
+  // looks empty when its check landed just before `since`.
+  const windowStart = Math.ceil(since.getTime() / slotMs) * slotMs;
+  // And don't draw empty days from before the URL existed. Seeded URLs have
+  // history older than createdAt, so the first point counts too.
+  const firstSeen = Math.min(url.createdAt.getTime(), points[0].t.getTime());
+  const firstSlot = Math.floor(firstSeen / slotMs) * slotMs;
+
+  const filled = fillSeries(points, new Date(Math.max(windowStart, firstSlot)), now, slotMs);
+  return filled.some((point) => point.totalChecks > 0) ? filled : [];
 }
 
 /** 24h reads raw checks: the window is small and 15-minute buckets are finer

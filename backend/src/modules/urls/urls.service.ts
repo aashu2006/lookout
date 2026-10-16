@@ -19,10 +19,8 @@ function isAdmin(user: AuthUser): boolean {
   return user.role === "ADMIN";
 }
 
-/** Starts the recurring schedule for newly created URLs. No extra manual job is
- * enqueued here: upsertJobScheduler fires its first run immediately, so a new
- * URL already gets one check right away — adding a manual one produced two
- * near-identical rows per create. */
+/** Schedules new URLs. upsertJobScheduler runs the first check right away, so
+ * no extra job is needed. */
 async function onUrlsCreated(urls: Url[]): Promise<void> {
   if (urls.length === 0) {
     return;
@@ -45,8 +43,8 @@ export async function createUrl(userId: string, input: CreateUrlInput): Promise<
     await onUrlsCreated([url]);
     return url;
   } catch (err) {
-    // Unique constraint on (userId, url) — caught rather than pre-checked so a
-    // concurrent create can't slip between a lookup and the insert.
+    // Unique on (userId, url). Catching it instead of checking first also
+    // covers two creates racing each other.
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
       throw new AppError(409, "duplicate_url", "You are already monitoring this URL");
     }
@@ -62,7 +60,7 @@ export async function bulkCreateUrls(
   const seen = new Set<string>();
   const candidates: { raw: string; normalized: string }[] = [];
 
-  // A bad URL only ever skips its own entry — it never fails the request.
+  // A bad URL just gets skipped, it doesn't fail the whole request.
   for (const raw of rawUrls) {
     let normalized: string;
     try {
@@ -103,9 +101,7 @@ export async function bulkCreateUrls(
     return { created: [], skipped };
   }
 
-  // One transaction; skipDuplicates is the safety net for a concurrent import
-  // racing us between the existence check above and this insert. createManyAndReturn
-  // is createMany with a RETURNING clause, so we get the created rows back.
+  // skipDuplicates covers another import sneaking in after the check above.
   const created = await prisma.$transaction(async (tx) =>
     tx.url.createManyAndReturn({
       data: toInsert.map((candidate) => ({ userId, url: candidate.normalized })),
@@ -144,18 +140,13 @@ export async function listUrls(
     prisma.url.count({ where }),
     prisma.url.findMany({
       where,
-      // id breaks ties: a bulk import writes every row with the same createdAt,
-      // and without a tiebreaker Postgres is free to return them in heap order —
-      // so updating one row (pause/resume) moved it to the end of the list and
-      // the table visibly reshuffled under the user between polls.
+      // id breaks ties, since a bulk import gives every row the same createdAt.
+      // Without it the table order jumped around between polls.
       orderBy: [{ createdAt: "desc" }, { id: "desc" }],
       skip: (page - 1) * pageSize,
       take: pageSize,
-      // Latest check per URL without N+1: under Prisma's default load strategy
-      // this is one extra batched query (`... WHERE url_id IN (<page ids>)`) for
-      // the whole page, not one per row. Verified against the query log — it is
-      // not a LATERAL join; that would need the `relationJoins` preview feature
-      // plus relationLoadStrategy: "join", which we have deliberately not enabled.
+      // Prisma loads the latest checks for the whole page in one extra query,
+      // not one per row.
       include: { checks: { orderBy: { checkedAt: "desc" }, take: 1 } },
     }),
   ]);

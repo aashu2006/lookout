@@ -414,7 +414,7 @@ function BulkImportModal({
                 <p className="mt-2 font-medium text-amber-700">Skipped {result.skipped.length}</p>
                 {result.skipped.map((item, index) => (
                   <p key={`${item.url}-${index}`} className="truncate text-gray-600">
-                    {item.url} — {item.reason}
+                    {item.url}: {item.reason}
                   </p>
                 ))}
               </>

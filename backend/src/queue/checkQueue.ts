@@ -8,8 +8,7 @@ export const CHECK_JOB_NAME = "check";
 export interface CheckJobData {
   urlId: string;
   trigger: "scheduled" | "manual";
-  /** Correlation id of the request that enqueued this job, when there was one.
-   * Scheduled jobs have no originating request and leave it undefined. */
+  /** Id of the request that queued this job. Scheduled jobs don't have one. */
   reqId?: string;
 }
 
@@ -24,20 +23,13 @@ export const checkQueue = new Queue<CheckJobData>(CHECK_QUEUE_NAME, {
   },
 });
 
-/**
- * Shared QueueEvents, used by the manual-check endpoint to await a specific job.
- * It needs its own connection: QueueEvents holds a blocking XREAD open, which
- * would monopolise a connection shared with the Queue.
- */
+/** Used by the manual check endpoint to wait on a job. Gets its own connection
+ * because it keeps a blocking read open. */
 export const queueEvents = new QueueEvents(CHECK_QUEUE_NAME, {
   connection: createRedisConnection("queue-events"),
 });
 
-// Both constructors return immediately and connect in the background, so
-// importing this module never blocks startup. They are also EventEmitters that
-// emit 'error' in their own right, separate from the ioredis connection under
-// them: an unlistened 'error' would be an uncaught exception. Debug level
-// because these repeat for the length of an outage, which connection.ts already
-// reports once at error level.
+// Without these an 'error' event would crash the process. Debug level because
+// connection.ts already logs the outage once at error.
 checkQueue.on("error", (err) => logger.debug({ err }, "check queue error"));
 queueEvents.on("error", (err) => logger.debug({ err }, "queue events error"));

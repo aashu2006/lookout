@@ -1,16 +1,12 @@
 /**
- * Seeds the demo dataset: two users, 20 real public URLs, and seven days of
- * synthetic history at the same 5-minute cadence the worker will use, then the
- * hourly rollup for every hour in that range.
+ * Seeds demo data: two users, 20 real URLs, and 7 days of fake history at the
+ * same 5 minute interval the worker uses, plus the hourly rollups.
  *
- *   npm run seed            # refuses if the demo user already exists
+ *   npm run seed            # stops if the demo user already exists
  *   npm run seed -- --force # deletes the demo users and starts over
  *
- * The URLs are real and stable on purpose. A live deployment keeps checking them
- * after seeding, so the synthetic history has to agree with what the checker
- * will actually observe — a host seeded as healthy must really be healthy, and
- * the four seeded-as-broken ones fail live for the same reason they fail in the
- * history (404, expired certificate, NXDOMAIN, 503).
+ * The URLs are real, so live checks after seeding match the history. Healthy
+ * ones really are healthy, and the four broken ones really fail.
  */
 import type { ErrorType, Prisma, Url } from "@prisma/client";
 import bcrypt from "bcryptjs";
@@ -27,8 +23,7 @@ const ADMIN_EMAIL = "admin@lookout.dev";
 const ADMIN_PASSWORD = "admin1234";
 
 const DAYS = 7;
-/** Matches the interval every seeded URL is created with, so the generated
- * history has exactly the shape the worker would have produced. */
+/** Every seeded URL gets this interval, and the history uses it too. */
 const CHECK_INTERVAL_SECONDS = 300;
 const INSERT_BATCH = 5000;
 const BCRYPT_COST = 12;
@@ -41,9 +36,7 @@ interface Failure {
   errorType: ErrorType;
   statusCode: number | null;
   errorMessage: string;
-  /** Overrides the URL's latency shape. Only a timeout has a fixed cost (the
-   * whole budget); every other failure is timed from the URL's own shape,
-   * which is how the checker records them. */
+  /** Only timeouts have a fixed duration (the whole timeout). */
   fixedResponseMs?: number;
 }
 
@@ -51,14 +44,12 @@ interface SeedUrl {
   url: string;
   baseMs: number;
   jitter: number;
-  /** Share of checks that fail. The broken hosts sit near 1 so their uptime
-   * matches what the live checker reports for them. */
+  /** Share of checks that fail. Broken hosts are at 1. */
   failureRate: number;
   failure: Failure;
 }
 
-/** Error messages mirror exactly what checker.ts writes, so a seeded row and a
- * live row are indistinguishable in the UI. */
+/** Same messages checker.ts writes, so seeded and live rows look the same. */
 const TRANSIENT: Failure = {
   errorType: "TIMEOUT",
   statusCode: null,
@@ -73,13 +64,8 @@ const SERVER_ERROR: Failure = {
 };
 
 const SEED_URLS: SeedUrl[] = [
-  // Reliably healthy public hosts. Latencies are set near what the checker
-  // actually measured for each of them, so seeded rows sit in the same range as
-  // the live ones that follow.
-  //
-  // npmjs.com and stackoverflow.com were dropped from this list: both answer a
-  // plain GET from a non-browser user-agent with 403, so seeding them as
-  // healthy would have contradicted every live check.
+  // Healthy hosts, with latencies close to what the checker actually sees.
+  // npmjs.com and stackoverflow.com aren't here because they 403 non-browser requests.
   { url: "https://www.google.com", baseMs: 190, jitter: 60, failureRate: 0.002, failure: TRANSIENT },
   { url: "https://www.github.com", baseMs: 380, jitter: 150, failureRate: 0.004, failure: SERVER_ERROR },
   { url: "https://en.wikipedia.org", baseMs: 200, jitter: 70, failureRate: 0.003, failure: TRANSIENT },
@@ -97,9 +83,8 @@ const SEED_URLS: SeedUrl[] = [
   { url: "https://redis.io", baseMs: 430, jitter: 180, failureRate: 0.005, failure: SERVER_ERROR },
   { url: "https://www.rust-lang.org", baseMs: 410, jitter: 170, failureRate: 0.004, failure: TRANSIENT },
 
-  // Reliably broken, each for a different reason, so the dashboard shows the
-  // error taxonomy rather than one repeated failure mode. All four fail live
-  // for the same reason they fail in the seeded history.
+  // Broken on purpose, each in a different way, so the dashboard shows a few
+  // different error types.
   {
     url: "https://en.wikipedia.org/saecs/Saweascasce",
     baseMs: 320,
@@ -130,10 +115,6 @@ const SEED_URLS: SeedUrl[] = [
     },
   },
   {
-    // Replaces httpstat.us, which answered 502 after 9.9s when probed — close
-    // enough to the timeout to be a coin flip. This endpoint stays DOWN either
-    // way: if httpbin itself is unavailable the live error type differs, but
-    // the status and uptime still agree with the history.
     url: "https://httpbin.org/status/503",
     baseMs: 900,
     jitter: 400,
@@ -146,8 +127,8 @@ function randomBetween(min: number, max: number): number {
   return min + Math.random() * (max - min);
 }
 
-/** Log-normal-ish: mostly near the base latency with an occasional long tail,
- * which is what makes p95 meaningfully higher than the average. */
+/** Mostly near the base latency with the odd slow one, so p95 ends up higher
+ * than the average. */
 function latencyFor(baseMs: number, jitter: number): number {
   const tail = Math.random() < 0.05 ? randomBetween(2, 6) : 1;
   return Math.max(1, Math.round((baseMs + randomBetween(-jitter, jitter)) * tail));
@@ -166,7 +147,7 @@ async function main(): Promise<void> {
   if (existing && !force) {
     logger.error(
       { email: DEMO_EMAIL },
-      "demo data already present — re-run with --force to delete and recreate",
+      "demo data already exists, re-run with --force to recreate it",
     );
     process.exitCode = 1;
     return;
@@ -204,9 +185,8 @@ async function main(): Promise<void> {
   logger.info({ ms: Date.now() - t, count: urls.length }, "created urls");
 
   // --- checks ---
-  // One point per URL per interval across the window, rather than uniformly
-  // random timestamps, so the charts show the even cadence a real 5-minute
-  // schedule produces.
+  // One check per interval instead of random times, so the charts look like a
+  // real schedule.
   t = Date.now();
   const now = Date.now();
   const windowStart = now - DAYS * DAY_MS;
@@ -239,8 +219,7 @@ async function main(): Promise<void> {
           urlId: url.id,
           status: "DOWN",
           statusCode,
-          // The checker times every attempt, including ones that fail before a
-          // response, so failures carry a duration too.
+          // Failures get a duration too, same as the real checker.
           responseMs: fixedResponseMs ?? latencyFor(shape.baseMs, shape.jitter),
           errorType,
           errorMessage,
@@ -281,10 +260,8 @@ async function main(): Promise<void> {
   const rollupMs = Date.now() - t;
   logger.info({ ms: rollupMs, hours, rows: rolledRows }, "rolled up hourly stats");
 
-  // Seeded rows go straight into the database, so nothing has created BullMQ
-  // schedulers for them. Reconciling here means a running worker starts checking
-  // the new URLs on its own, and schedulers left over from a previous seed are
-  // dropped, with no restart needed.
+  // The URLs went straight into the db, so sync the schedulers here. A running
+  // worker then picks them up without a restart.
   t = Date.now();
   const schedules = await reconcileSchedules();
   logger.info({ ms: Date.now() - t, ...schedules }, "reconciled schedulers");
@@ -312,10 +289,8 @@ try {
   logger.error({ err }, "seed failed");
   process.exitCode = 1;
 } finally {
-  // Importing the scheduler pulls in checkQueue, which opens Redis connections
-  // (including a QueueEvents blocking read) that keep the event loop alive. Close
-  // what we can, then exit explicitly: this is a one-shot script, and waiting on
-  // a blocking stream reader to unwind is not worth the hang.
+  // The queue imports leave Redis connections open, so close what we can and
+  // exit instead of hanging.
   await Promise.allSettled([queueEvents.close(), checkQueue.close(), prisma.$disconnect()]);
   await redis.quit().catch(() => undefined);
   process.exit(process.exitCode ?? 0);

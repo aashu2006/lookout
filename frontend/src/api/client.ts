@@ -45,8 +45,8 @@ export function clearToken(): void {
 interface RequestOptions {
   method?: string;
   body?: unknown;
-  /** Skip the 401 redirect — used by the initial /auth/me probe, which should
-   * fail quietly into the login screen rather than bouncing mid-render. */
+  /** Skip the 401 redirect. Used by the first /auth/me call, which should just
+   * fall back to the login screen. */
   skipAuthRedirect?: boolean;
 }
 

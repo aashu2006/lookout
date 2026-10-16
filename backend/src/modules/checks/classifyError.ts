@@ -7,10 +7,8 @@ const TLS_CODES = new Set(["UNABLE_TO_VERIFY_LEAF_SIGNATURE"]);
 
 function isTlsCode(code: string): boolean {
   return (
-    // Anything mentioning a certificate is a TLS problem, wherever the word sits
-    // in the code: CERT_HAS_EXPIRED, DEPTH_ZERO_SELF_SIGNED_CERT,
-    // SELF_SIGNED_CERT_IN_CHAIN, ERR_TLS_CERT_ALTNAME_INVALID and any future
-    // OpenSSL code we have not seen yet.
+    // Any code with CERT in it is a TLS problem (CERT_HAS_EXPIRED,
+    // SELF_SIGNED_CERT_IN_CHAIN, etc).
     code.includes("CERT") ||
     code.startsWith("ERR_TLS_") ||
     code.startsWith("ERR_SSL_") ||
@@ -18,8 +16,7 @@ function isTlsCode(code: string): boolean {
   );
 }
 
-/** Maps a thrown fetch error to a stored ErrorType. Pure and dependency-free so
- * it can be unit tested with hand-built error objects. */
+/** Maps a thrown fetch error to an ErrorType. */
 export function classifyError(err: unknown): { errorType: ErrorType; message: string } {
   const error = err as {
     name?: string;
@@ -53,10 +50,8 @@ export function classifyError(err: unknown): { errorType: ErrorType; message: st
     return { errorType: "INVALID_URL", message };
   }
 
-  // The fetch standard keeps a blocked-ports list (1, 7, 9, 21, 25, ...). undici
-  // rejects those before opening a socket, with a bare `Error: bad port` carrying
-  // no code — so e.g. http://host:1 can never surface as ECONNREFUSED, however
-  // closed the port is. Treat it as an unusable URL rather than an unknown fault.
+  // fetch blocks some ports (1, 7, 9, 21, 25, ...) before even connecting, so
+  // http://host:1 gives "bad port" instead of ECONNREFUSED. Count it as a bad URL.
   if (error?.cause?.message === "bad port") {
     return { errorType: "INVALID_URL", message: "bad port: blocked by the fetch specification" };
   }

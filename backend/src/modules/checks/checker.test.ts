@@ -34,8 +34,8 @@ beforeAll(async () => {
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 
-  // Bind a second port, then release it, so we have an address on loopback
-  // where nothing is listening — a reliable ECONNREFUSED without any network.
+  // Open a port and close it again, so nothing is listening there and we get
+  // a real ECONNREFUSED.
   const spare = http.createServer();
   await new Promise<void>((resolve) => spare.listen(0, "127.0.0.1", resolve));
   const sparePort = (spare.address() as AddressInfo).port;

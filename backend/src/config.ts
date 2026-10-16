@@ -3,17 +3,10 @@ import { z } from "zod";
 
 const envSchema = z.object({
   PORT: z.coerce.number().int().positive().default(4000),
-  // Both are passed to Prisma and ioredis exactly as given, so a provider's
-  // connection string (credentials, ?sslmode=..., internal hostname) works
-  // unmodified.
   DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
   REDIS_URL: z.string().min(1, "REDIS_URL is required"),
-  // DNS resolution family for the Redis connection. Unset uses ioredis's own
-  // default (IPv4). Set to 0 on hosts whose private networking is IPv6-only —
-  // Railway's *.railway.internal names publish AAAA records only, and the
-  // IPv4-only default cannot resolve them.
-  // Not z.coerce.number(): Number("") is 0, so an empty REDIS_FAMILY= line in a
-  // .env would silently switch the family to 0 instead of leaving it unset.
+  // DNS family for Redis. Leave unset normally, set 0 on IPv6-only networks.
+  // Not z.coerce.number(), because Number("") is 0 and an empty value would set it.
   REDIS_FAMILY: z
     .string()
     .trim()
@@ -26,16 +19,12 @@ const envSchema = z.object({
   LOG_LEVEL: z
     .enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"])
     .default("info"),
-  // Not z.coerce.boolean(): that is just Boolean(value), so the string "false"
-  // comes out true and LOG_PRETTY=false would still load pino-pretty — which
-  // does not exist in the production image.
+  // Not z.coerce.boolean(), because Boolean("false") is true.
   LOG_PRETTY: z
     .string()
     .default("false")
     .transform((value) => ["1", "true", "yes", "on"].includes(value.trim().toLowerCase())),
-  // Runs the worker inside the api process instead of as its own service. For
-  // hosts that give you a single free container (Render). Parsed like
-  // LOG_PRETTY, for the same reason.
+  // Runs the worker inside the api process, for hosts with one container (Render).
   EMBED_WORKER: z
     .string()
     .default("false")
@@ -56,7 +45,6 @@ if (!parsed.success) {
   const issues = parsed.error.issues
     .map((issue) => `  - ${issue.path.join(".")}: ${issue.message}`)
     .join("\n");
-  // eslint-disable-next-line no-console
   console.error(`Invalid environment configuration:\n${issues}`);
   process.exit(1);
 }

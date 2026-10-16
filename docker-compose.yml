@@ -1,12 +1,10 @@
-# Full stack. Everything the browser needs is on http://localhost:8080 — nginx
-# serves the built frontend and proxies /api to the api container, so Postgres,
-# Redis and the API itself stay on the internal network with no published ports.
+# Full stack on http://localhost:8080. nginx serves the frontend and proxies
+# /api to the api, nothing else is exposed.
 #
 #   docker compose up --build -d
 #
-# For host development (npm run dev in backend/ and frontend/) you need Postgres
-# and Redis reachable from the host instead. The override file publishes their
-# ports and nothing else:
+# To run the app outside Docker, docker-compose.dev.yml exposes just Postgres
+# and Redis:
 #
 #   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres redis
 
@@ -39,8 +37,7 @@ services:
     build:
       context: ./backend
     restart: unless-stopped
-    # Migrations run here rather than in an entrypoint script so there is exactly
-    # one place that touches the schema, and the worker waits on this being healthy.
+    # Only the api runs migrations. The worker waits for it to be healthy.
     command: sh -c "npx prisma migrate deploy && node dist/server.js"
     environment:
       NODE_ENV: production

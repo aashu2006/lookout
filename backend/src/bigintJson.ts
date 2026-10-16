@@ -1,10 +1,6 @@
-// Check.id is a Postgres bigint, which Prisma hands back as a JS BigInt, and
-// JSON.stringify throws on BigInt values. Serialize them as strings — Number()
-// would silently lose precision past 2^53.
-//
-// Imported for its side effect by BOTH process entrypoints (app.ts and
-// worker.ts). The worker needs it too: BullMQ JSON-serializes a job's return
-// value into Redis, and the check processor returns a Check row.
+// Check.id is a bigint and JSON.stringify throws on BigInt, so send it as a
+// string (Number() would lose precision). Imported by both app.ts and worker.ts,
+// since BullMQ also JSON-encodes the Check row a job returns.
 declare global {
   interface BigInt {
     toJSON(): string;

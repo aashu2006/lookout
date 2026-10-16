@@ -27,8 +27,7 @@ app.use(express.json());
 app.use(
   pinoHttp({
     logger,
-    // Honour an upstream x-request-id so a trace survives across hops, and mint
-    // one otherwise. Echoed back so clients can quote it when reporting a problem.
+    // Reuse an incoming x-request-id or make a new one, and send it back.
     genReqId: (req, res) => {
       const incoming = req.headers["x-request-id"];
       const id = typeof incoming === "string" && incoming.length > 0 ? incoming : randomUUID();
@@ -36,8 +35,7 @@ app.use(
       return id;
     },
     customLogLevel: (req, res, err) => {
-      // /health is polled by the container healthcheck every few seconds; at info
-      // it drowns out everything else.
+      // The healthcheck hits /health every few seconds, keep it out of info logs.
       if (req.url === "/health") {
         return "debug";
       }
@@ -75,13 +73,8 @@ app.use("/api/urls", urlsRouter);
 app.use("/api/dashboard", dashboardRouter);
 app.use("/api", metricsRouter);
 
-/**
- * Ceiling on the database probe. Generous enough to cover the first request,
- * which pays for the Prisma engine's initial connect, but bounded: /health has
- * to answer even when Postgres is hung, or the platform's healthcheck sees a
- * request timeout and cannot distinguish "unhealthy" from "not listening".
- * pingRedis applies its own, shorter, limit.
- */
+// /health has to answer even if Postgres hangs, so the db ping gets a limit.
+// 5s leaves room for Prisma's first connect.
 const HEALTH_DB_TIMEOUT_MS = 5000;
 
 app.get("/health", async (req: Request, res: Response) => {
@@ -123,7 +116,6 @@ app.use((req: Request, res: Response) => {
 });
 
 // Central error handler
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 app.use((err: unknown, req: Request, res: Response, _next: NextFunction) => {
   if (err instanceof AppError) {
     res.status(err.statusCode).json({ error: err.code, message: err.message });

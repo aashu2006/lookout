@@ -106,12 +106,8 @@ async function aggregateFromChecks(urlId: string, since: Date): Promise<Aggregat
   return row ?? { totalChecks: 0, failures: 0, avgMs: null, p95Ms: null };
 }
 
-/**
- * 7d and 30d read url_stats_hourly rather than raw checks — this is exactly what
- * the rollup table is for. A 30d window on a 60s-interval URL is ~43k check rows
- * to scan and sort per request; the rollup answers it from ~720 pre-aggregated
- * ones, and the cost stays flat as check volume grows.
- */
+/** 7d and 30d read the hourly rollup instead of raw checks, so they stay fast
+ * as history grows. */
 async function seriesFromRollup(urlId: string, since: Date): Promise<SeriesPoint[]> {
   return prisma.$queryRaw<SeriesPoint[]>`
     SELECT
@@ -131,12 +127,10 @@ async function aggregateFromRollup(urlId: string, since: Date): Promise<Aggregat
     SELECT
       coalesce(sum(total_checks), 0)::int AS "totalChecks",
       coalesce(sum(failures), 0)::int AS "failures",
-      -- Weighted by checks per hour so long/short hours count proportionally.
-      -- Slightly approximate: avg_ms covers only checks that returned a timing,
-      -- while total_checks also counts failures with a null response_ms.
+      -- Weighted by checks per hour. Slightly off, since total_checks also counts
+      -- failures that have no timing.
       (sum(avg_ms * total_checks) / nullif(sum(total_checks), 0))::double precision AS "avgMs",
-      -- A true p95 cannot be recovered from per-hour p95s without the underlying
-      -- samples; the worst hourly p95 is the honest conservative summary.
+      -- Can't get a real p95 back from hourly p95s, so use the worst hour.
       max(p95_ms)::int AS "p95Ms"
     FROM url_stats_hourly
     WHERE url_id = ${urlId} AND hour >= ${since}
@@ -155,19 +149,9 @@ export async function getSummary(
   const [totalUrls, activeUrls, latest, aggregate] = await Promise.all([
     prisma.url.count({ where: urlWhere }),
     prisma.url.count({ where: { ...urlWhere, isActive: true } }),
-    // Latest check per URL: one LATERAL lookup per URL, each an index seek into
-    // checks_url_id_checked_at_idx that stops at the first row (LIMIT 1).
-    //
-    // This replaces a DISTINCT ON (url_id) ... ORDER BY url_id, checked_at DESC.
-    // DISTINCT ON does use that index, but only to read it *in order* — it walks
-    // every entry for the scoped URLs and discards all but the first of each
-    // group, so its cost grows with total check volume. Measured on 60 URLs /
-    // 120k checks: DISTINCT ON 50.4ms scanning 120,009 index rows (121k buffer
-    // hits) vs LATERAL 0.51ms doing 60 seeks (240 buffer hits). The gap widens
-    // as history accumulates, and dashboard load is the hottest read we have.
-    //
-    // The LEFT JOIN also makes "never checked" explicit as a NULL status,
-    // instead of inferring pending from a row-count difference.
+    // Latest check per URL. LATERAL + LIMIT 1 is one index seek per URL, way
+    // faster than DISTINCT ON, which reads every check for those URLs.
+    // A URL with no checks yet comes back with a NULL status.
     prisma.$queryRaw<{ status: "UP" | "DOWN" | null }[]>`
       SELECT latest.status
       FROM urls u

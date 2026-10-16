@@ -68,7 +68,6 @@ export function usePolling<T>(
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", onVisible);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [intervalMs, tick, ...deps]);
 
   return { data, error, loading, refresh };

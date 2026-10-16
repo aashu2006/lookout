@@ -1,9 +1,5 @@
-/**
- * Parses and normalizes a URL string for storage/dedup purposes.
- * Throws a plain Error with a short, user-facing reason on any validation failure —
- * callers decide how to surface it (wrap in AppError for a single create, or record
- * as a per-item "invalid: <reason>" skip in bulk import).
- */
+/** Cleans up a URL so duplicates match. Throws an Error with a short,
+ * user-facing reason if it's not valid. */
 export function normalizeUrl(raw: string): string {
   let parsed: URL;
   try {

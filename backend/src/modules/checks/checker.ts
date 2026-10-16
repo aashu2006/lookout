@@ -14,8 +14,7 @@ export interface CheckResult {
 const USER_AGENT = "lookout-monitor/0.1";
 const MAX_ERROR_MESSAGE_LENGTH = 500;
 
-/** Performs a single HTTP health check. Pure in the sense that it touches no
- * database — it only does the request and reports what happened. */
+/** Does one HTTP check and reports what happened. Doesn't touch the db. */
 export async function checkUrl(url: string, opts?: { timeoutMs?: number }): Promise<CheckResult> {
   const timeoutMs = opts?.timeoutMs ?? config.checkTimeoutMs;
   const controller = new AbortController();
@@ -26,19 +25,15 @@ export async function checkUrl(url: string, opts?: { timeoutMs?: number }): Prom
 
   try {
     const response = await fetch(url, {
-      // GET rather than HEAD: plenty of servers reject or mishandle HEAD and
-      // would report as down when they are fine.
+      // GET, not HEAD. Lots of servers handle HEAD badly and would look down.
       method: "GET",
       redirect: "follow",
       signal: controller.signal,
       headers: { "user-agent": USER_AGENT },
     });
 
-    // fetch settles as soon as the response headers arrive, so this measures
-    // time-to-first-byte rather than full download time. That is what we want:
-    // it reflects server responsiveness instead of page weight or our own
-    // bandwidth, and it keeps timings comparable across a 2 KB status page and
-    // a 5 MB one. The body is then discarded without reading it.
+    // fetch resolves once headers arrive, so this is time to first byte, not
+    // download time. The body is thrown away unread.
     const responseMs = Math.round(performance.now() - startedAt);
     await response.body?.cancel();
 

@@ -1,52 +1,36 @@
 import { config } from "./config.js";
 import { logger } from "./logger.js";
 
-// This must be the first thing the process prints. Only config and logger are
-// imported statically, and both are pure, so reaching this line proves the
-// process started and the environment parsed.
+// First log line. Only config and logger are loaded so far, so seeing this
+// means the process started and the env parsed fine.
 logger.info(
   { port: config.port, nodeEnv: config.nodeEnv, logLevel: config.logLevel },
   "starting",
 );
 
-// ./app.js is loaded dynamically on purpose. Static imports are all evaluated
-// before the module body runs, so a static `import { app } from "./app.js"`
-// would put the whole route/Prisma/queue graph ahead of the "starting" line
-// above: anything slow or stuck in there would produce total silence, with no
-// way to tell a hung import from a process that never launched. Loading it here
-// means a hang is bracketed by "starting" and the absence of "listening".
+// app.js is imported dynamically so if loading it hangs, you see "starting"
+// with no "listening" instead of no logs at all.
 const { app } = await import("./app.js").catch((err: unknown) => {
   logger.fatal({ err }, "failed to load the application");
   process.exit(1);
 });
 
-// No host argument on purpose: Node then binds the unspecified address (::),
-// which accepts both IPv6 and IPv4-mapped connections. Passing "0.0.0.0" would
-// be narrower, not wider — it would drop IPv6, which some platforms (Railway)
-// use for private networking. PORT comes from the environment, which is how
-// hosted platforms tell the process where to listen.
-//
-// listen() is called before any Redis, Prisma or queue work. Those connect in
-// the background, so /health answers (with db/redis "error") instead of the
-// port staying silent while a datastore is unreachable.
+// No host, so Node listens on :: and accepts both IPv4 and IPv6.
+// This runs before any Redis or Prisma work, so /health still answers when
+// they're down.
 const server = app.listen(config.port, () => {
   logger.info({ port: config.port }, "listening");
 });
 
-// A failed bind — port already taken, address unavailable — is emitted here
-// rather than thrown. Without a listener it would be an uncaught exception with
-// no context about which port was being claimed.
+// A failed bind (port taken etc.) comes through here, not as a throw.
 server.on("error", (err) => {
   logger.fatal({ err, port: config.port }, "server failed to listen");
   process.exit(1);
 });
 
-// EMBED_WORKER runs the worker in this process, for hosts that offer one free
-// container and no background workers. It is started after listen() and not
-// awaited: worker.ts reconciles schedulers against Postgres and Redis at the top
-// level, and the port must not wait on that. A worker that cannot start is
-// fatal, the same as it is for the standalone process, so the platform restarts
-// the container instead of leaving an api up that silently checks nothing.
+// EMBED_WORKER runs the worker in this process (Render free tier). It starts
+// after listen() and isn't awaited. If it can't start we exit, so the host
+// restarts us instead of running an api that checks nothing.
 let closeWorker: (() => Promise<void>) | undefined;
 
 if (config.embedWorker) {
@@ -68,8 +52,7 @@ function shutdown(signal: string): void {
       logger.error({ err }, "error during shutdown");
       process.exit(1);
     }
-    // Requests have drained by now, so in-flight jobs can finish and the
-    // shared connections can go.
+    // Requests are done, now let running jobs finish and close connections.
     void (closeWorker?.() ?? Promise.resolve())
       .catch((closeErr: unknown) => logger.error({ err: closeErr }, "error closing worker"))
       .finally(() => {

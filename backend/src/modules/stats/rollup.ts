@@ -11,12 +11,8 @@ export function startOfHour(date: Date): Date {
   return new Date(Math.floor(date.getTime() / HOUR_MS) * HOUR_MS);
 }
 
-/**
- * Recomputes url_stats_hourly for every URL with checks in the given hour, in a
- * single INSERT ... SELECT. Aggregating in Postgres keeps the check rows in the
- * database instead of streaming them into Node, and one upsert statement means
- * no per-URL round trips.
- */
+/** Recomputes url_stats_hourly for one hour in a single INSERT ... SELECT, so
+ * all the work stays in Postgres. */
 export async function rollupHour(hourStart: Date): Promise<number> {
   const hourEnd = new Date(hourStart.getTime() + HOUR_MS);
 
@@ -42,11 +38,8 @@ export async function rollupHour(hourStart: Date): Promise<number> {
   return rows;
 }
 
-/**
- * Rolls up the previous full hour and the current partial one, so the dashboard
- * is never more than one rollup interval stale. Re-running is safe: the upsert
- * overwrites the partial hour with a more complete figure each pass.
- */
+/** Rolls up the last full hour and the current one. Safe to re-run since it's
+ * an upsert. */
 export async function rollupRecent(): Promise<{ previousHour: number; currentHour: number }> {
   const currentHour = startOfHour(new Date());
   const previousHour = new Date(currentHour.getTime() - HOUR_MS);
@@ -59,10 +52,7 @@ export async function rollupRecent(): Promise<{ previousHour: number; currentHou
   return counts;
 }
 
-/**
- * Deletes checks past the retention window in batches, so a long-neglected table
- * never turns into one enormous delete holding locks and bloating WAL.
- */
+/** Deletes old checks in batches so one huge DELETE doesn't lock up the table. */
 export async function pruneOldChecks(): Promise<number> {
   const cutoff = new Date(Date.now() - config.checkRetentionDays * 24 * HOUR_MS);
 

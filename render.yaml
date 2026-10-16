@@ -1,6 +1,5 @@
-# Render Blueprint: the api (with the worker embedded) and Redis, both on the
-# free plan. Postgres is not here because Render's free Postgres is deleted
-# after 30 days; DATABASE_URL points at Supabase instead. See docs/DEPLOY.md.
+# Render Blueprint: the api (with the worker inside it) and Redis, both free.
+# Postgres is on Supabase since Render's free Postgres gets deleted after 30 days.
 services:
   - type: keyvalue
     name: lookout-redis

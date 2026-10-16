@@ -1,11 +1,6 @@
-// Separate process from the API (src/server.ts). The API only ever *enqueues*
-// jobs — it never constructs a Worker — so HTTP latency is never affected by a
-// slow site, and checks keep running even while the API is redeploying. Run it
-// with `npm run worker` (dev) or `npm run start:worker` (built).
-//
-// The one exception is EMBED_WORKER=true, where server.ts imports this module
-// into the api process. That gives up the isolation above and exists only for
-// hosts with a single free container and no background workers.
+// The worker. Runs as its own process so a slow site never slows down the api.
+// Start it with `npm run worker` (dev) or `npm run start:worker` (built).
+// With EMBED_WORKER=true, server.ts loads it into the api process instead.
 import { Queue, Worker } from "bullmq";
 import "./bigintJson.js";
 import { config } from "./config.js";
@@ -22,20 +17,12 @@ const connection = createRedisConnection("worker");
 const worker = new Worker<CheckJobData>(
   CHECK_QUEUE_NAME,
   async (job) => {
-    // A DOWN result is a SUCCESSFUL job. The check ran, we learned the site is
-    // down, and the row is recorded — that is the job doing its job. Only
-    // infrastructure faults (Postgres unreachable, the url row gone) throw and
-    // therefore retry with backoff.
-    //
-    // Treating DOWN as a job failure would be actively wrong: BullMQ would retry
-    // it 3x per interval, hammering a site that is already struggling, and each
-    // attempt would write another DOWN row, inflating the outage in the history
-    // and in any uptime percentage computed from it.
+    // A DOWN site still counts as a successful job. Only real faults (db down,
+    // url deleted) throw and retry. Otherwise we'd hit a struggling site 3 times
+    // and write 3 DOWN rows for one outage.
 
-    // reqId comes from the request that enqueued this job (manual checks), so a
-    // single trace spans the API process and this one. Scheduled jobs have none.
-    // urlId is deliberately not bound here: checks.service already logs it, and
-    // binding it too emitted the key twice in the same JSON line.
+    // reqId ties a manual check back to the request that queued it. urlId is
+    // left out because checks.service already logs it.
     const jobLogger = logger.child({
       reqId: job.data.reqId,
       jobId: job.id,
@@ -117,8 +104,7 @@ const maintenanceWorker = new Worker(
         throw new Error(`unknown maintenance job: ${job.name}`);
     }
   },
-  // Serial: these are whole-table statements, and overlapping runs would only
-  // contend for the same rows.
+  // One at a time, these hit the whole table.
   { connection: maintenanceConnection, concurrency: 1 },
 );
 
@@ -132,8 +118,8 @@ maintenanceWorker.on("failed", (job, err) => {
 
 maintenanceWorker.on("error", (err) => logger.error({ err }, "maintenance worker error"));
 
-/** Same reconcile-on-boot pattern as the URL schedulers: this list is the source
- * of truth, and anything else left in Redis is removed. */
+/** Same idea as the URL schedulers: this list wins, anything else in Redis
+ * gets removed. */
 async function reconcileMaintenanceSchedules(): Promise<void> {
   for (const schedule of MAINTENANCE_SCHEDULES) {
     await maintenanceQueue.upsertJobScheduler(
@@ -163,12 +149,11 @@ async function reconcileMaintenanceSchedules(): Promise<void> {
 // Bring Redis in line with the database before processing anything.
 await reconcileSchedules();
 await reconcileMaintenanceSchedules();
-// Fill in any hours missed while this process was down, so the dashboard is
-// current immediately rather than after the first scheduled rollup.
+// Catch up on any hours missed while the worker was down.
 await rollupRecent();
 
-/** Closes everything this module opened, without exiting. Exported so the api
- * can run it as part of its own shutdown when the worker is embedded. */
+/** Closes everything this module opened. The api calls it on shutdown when
+ * the worker is embedded. */
 export async function closeWorker(): Promise<void> {
   // close() waits for in-flight jobs to finish before releasing the lock.
   await worker.close();
@@ -200,8 +185,7 @@ async function shutdown(signal: string): Promise<void> {
   }
 }
 
-// Embedded, the api owns the signals: it stops accepting requests first and
-// then calls closeWorker(). Two sets of handlers would race to process.exit().
+// When embedded, the api handles signals and calls closeWorker() itself.
 if (!config.embedWorker) {
   process.on("SIGINT", () => void shutdown("SIGINT"));
   process.on("SIGTERM", () => void shutdown("SIGTERM"));

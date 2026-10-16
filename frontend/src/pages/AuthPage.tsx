@@ -1,13 +1,26 @@
 import { useState } from "react";
 import type { FormEvent } from "react";
-import { Navigate, useNavigate } from "react-router-dom";
+import { Navigate, useLocation, useNavigate } from "react-router-dom";
 import { ApiError } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { Button, Spinner } from "../components/ui";
 
+/** Where to go after logging in: the page RequireAuth bounced us from, or ?next
+ * after a 401. Only paths on this site, so ?next can't send you somewhere else. */
+function redirectTarget(state: unknown, search: string): string {
+  const fromState = (state as { from?: unknown } | null)?.from;
+  const target = typeof fromState === "string" ? fromState : new URLSearchParams(search).get("next");
+  if (!target || !target.startsWith("/") || target.startsWith("//") || target === "/login") {
+    return "/";
+  }
+  return target;
+}
+
 export function AuthPage({ mode }: { mode: "login" | "signup" }) {
   const { user, loading, login, signup } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  const target = redirectTarget(location.state, location.search);
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -18,7 +31,7 @@ export function AuthPage({ mode }: { mode: "login" | "signup" }) {
     return <div className="p-8 text-sm text-gray-500">Loading…</div>;
   }
   if (user) {
-    return <Navigate to="/" replace />;
+    return <Navigate to={target} replace />;
   }
 
   const isSignup = mode === "signup";
@@ -29,7 +42,7 @@ export function AuthPage({ mode }: { mode: "login" | "signup" }) {
     setSubmitting(true);
     try {
       await (isSignup ? signup(email, password) : login(email, password));
-      navigate("/", { replace: true });
+      navigate(target, { replace: true });
     } catch (err) {
       if (err instanceof ApiError) {
         // A 400 carries per-field detail worth showing; anything else has one message.

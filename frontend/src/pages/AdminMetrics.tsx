@@ -40,7 +40,10 @@ export function AdminMetrics() {
               lastHour.failureRate == null ? "—" : `${Math.round(lastHour.failureRate * 100)}%`
             }
           />
-          <Card label="Avg" value={lastHour.avgMs == null ? "—" : `${lastHour.avgMs} ms`} />
+          <Card
+            label="Avg"
+            value={lastHour.avgMs == null ? "—" : `${Math.round(lastHour.avgMs)} ms`}
+          />
           <Card label="P95" value={lastHour.p95Ms == null ? "—" : `${lastHour.p95Ms} ms`} />
         </div>
       </section>

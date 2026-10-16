@@ -32,7 +32,11 @@ export const listUrlsQuerySchema = z.object({
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
   status: z.enum(["active", "inactive"]).optional(),
   // Only honoured for ADMIN users; ignored for everyone else (enforced in the service).
-  all: z.coerce.boolean().optional(),
+  // Not z.coerce.boolean(), because Boolean("false") is true.
+  all: z
+    .string()
+    .optional()
+    .transform((value) => value === "true" || value === "1"),
 });
 
 export const checksQuerySchema = z.object({

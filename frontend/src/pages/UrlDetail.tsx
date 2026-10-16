@@ -168,7 +168,10 @@ export function UrlDetail() {
         />
         <Card label="Total checks" value={stats.data?.totalChecks ?? "—"} />
         <Card label="Failures" value={stats.data?.failures ?? "—"} />
-        <Card label="Avg" value={stats.data?.avgMs == null ? "—" : `${stats.data.avgMs} ms`} />
+        <Card
+          label="Avg"
+          value={stats.data?.avgMs == null ? "—" : `${Math.round(stats.data.avgMs)} ms`}
+        />
         <Card label="P95" value={stats.data?.p95Ms == null ? "—" : `${stats.data.p95Ms} ms`} />
       </div>
 

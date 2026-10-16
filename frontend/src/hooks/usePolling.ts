@@ -30,11 +30,15 @@ export function usePolling<T>(
 
   useEffect(() => {
     let cancelled = false;
+    // Skip a tick while the last request is still going, so a slow api doesn't
+    // pile up requests or let an old response overwrite a newer one.
+    let inFlight = false;
 
     const run = async () => {
-      if (document.hidden) {
+      if (document.hidden || inFlight) {
         return;
       }
+      inFlight = true;
       try {
         const result = await fnRef.current();
         if (!cancelled) {
@@ -46,6 +50,7 @@ export function usePolling<T>(
           setError(err instanceof Error ? err : new Error(String(err)));
         }
       } finally {
+        inFlight = false;
         if (!cancelled) {
           setLoading(false);
         }

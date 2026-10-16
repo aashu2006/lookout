@@ -6,7 +6,11 @@ export const urlStatsQuerySchema = z.object({
 
 export const summaryQuerySchema = z.object({
   // Only honoured for ADMIN users; ignored for everyone else (enforced in the route).
-  all: z.coerce.boolean().optional(),
+  // Not z.coerce.boolean(), because Boolean("false") is true.
+  all: z
+    .string()
+    .optional()
+    .transform((value) => value === "true" || value === "1"),
 });
 
 export type UrlStatsQuery = z.infer<typeof urlStatsQuerySchema>;

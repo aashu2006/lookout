@@ -75,7 +75,8 @@ export async function api<T>(path: string, options: RequestOptions = {}): Promis
   if (response.status === 401 && !skipAuthRedirect) {
     clearToken();
     if (window.location.pathname !== "/login") {
-      window.location.assign("/login");
+      // Remember where we were so login can send us back.
+      window.location.assign(`/login?next=${encodeURIComponent(window.location.pathname)}`);
     }
   }
 

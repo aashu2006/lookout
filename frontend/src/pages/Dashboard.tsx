@@ -35,7 +35,7 @@ export function Dashboard() {
   const [newInterval, setNewInterval] = useState(300);
   const [submitting, setSubmitting] = useState(false);
   const [bulkOpen, setBulkOpen] = useState(false);
-  const [busyRow, setBusyRow] = useState<string | null>(null);
+  const [busyRows, setBusyRows] = useState<Set<string>>(new Set());
   // "Check now" results, shown right away until polling brings something newer.
   const [freshChecks, setFreshChecks] = useState<Record<string, Check>>({});
 
@@ -78,7 +78,7 @@ export function Dashboard() {
   };
 
   const onCheckNow = async (id: string) => {
-    setBusyRow(id);
+    setBusyRows((current) => new Set(current).add(id));
     try {
       const result = await api<ManualCheckResponse>(`/api/urls/${id}/check`, { method: "POST" });
       if ("check" in result) {
@@ -91,7 +91,11 @@ export function Dashboard() {
     } catch (err) {
       notify("error", errorMessage(err, "Check failed"));
     } finally {
-      setBusyRow(null);
+      setBusyRows((current) => {
+        const next = new Set(current);
+        next.delete(id);
+        return next;
+      });
     }
   };
 
@@ -293,10 +297,10 @@ export function Dashboard() {
                       <button
                         type="button"
                         onClick={() => onCheckNow(row.id)}
-                        disabled={busyRow === row.id}
+                        disabled={busyRows.has(row.id)}
                         className="text-indigo-600 hover:underline disabled:opacity-50"
                       >
-                        {busyRow === row.id ? <Spinner /> : "Check now"}
+                        {busyRows.has(row.id) ? <Spinner /> : "Check now"}
                       </button>
                       <button
                         type="button"

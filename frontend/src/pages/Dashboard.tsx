@@ -124,8 +124,11 @@ export function Dashboard() {
 
   const onCheckAll = async () => {
     try {
-      const result = await api<{ enqueued: number }>("/api/urls/check-all", { method: "POST" });
-      notify("success", `queued ${result.enqueued} checks`);
+      const result = await api<{ enqueued: number }>(
+        `/api/urls/check-all?${allParam.slice(1)}`,
+        { method: "POST" },
+      );
+      notify("success", `Queued ${result.enqueued} checks`);
     } catch (err) {
       notify("error", errorMessage(err, "Could not queue checks"));
     }

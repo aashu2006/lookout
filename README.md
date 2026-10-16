@@ -89,7 +89,7 @@ Everything is under `/api` and uses `Authorization: Bearer <token>`, except sign
 | GET | `/api/urls/:id/checks` | user | Check history, newest first (`limit`, max 500) |
 | GET | `/api/urls/:id/stats` | user | Uptime and response times (`window` = 24h, 7d, 30d) |
 | POST | `/api/urls/:id/check` | user | Run a check right now |
-| POST | `/api/urls/check-all` | user | Queue a check for every active URL |
+| POST | `/api/urls/check-all` | user | Queue a check for every active URL (`all` for admins) |
 | GET | `/api/dashboard/summary` | user | Up/down counts and 24h uptime |
 | GET | `/api/metrics` | admin | Check, queue and process metrics |
 | GET | `/health` | anyone | Says whether the db and Redis are reachable |

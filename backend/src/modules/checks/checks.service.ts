@@ -68,9 +68,10 @@ export async function runChecksForUrls(urlIds: string[]): Promise<PromiseSettled
   return Promise.allSettled(urlIds.map((id) => withSlot(() => runCheckForUrl(id))));
 }
 
-export async function getActiveUrlIdsForUser(userId: string): Promise<string[]> {
+/** Active URL ids for one user, or for everyone when `all` is set. */
+export async function getActiveUrlIds(userId: string, opts: { all: boolean }): Promise<string[]> {
   const urls = await prisma.url.findMany({
-    where: { userId, isActive: true },
+    where: { isActive: true, ...(opts.all ? {} : { userId }) },
     select: { id: true },
   });
   return urls.map((url) => url.id);

@@ -5,7 +5,7 @@ import { asyncHandler } from "../../middleware/asyncHandler.js";
 import { CHECK_JOB_NAME, checkQueue, queueEvents } from "../../queue/checkQueue.js";
 import { requireAuth } from "../auth/auth.middleware.js";
 import { getUrlById } from "../urls/urls.service.js";
-import { getActiveUrlIdsForUser } from "./checks.service.js";
+import { getActiveUrlIds } from "./checks.service.js";
 
 /** How long the synchronous manual check waits before handing back a job id. */
 const MANUAL_CHECK_TIMEOUT_MS = 15000;
@@ -51,7 +51,10 @@ checksRouter.post(
 checksRouter.post(
   "/check-all",
   asyncHandler(async (req, res) => {
-    const urlIds = await getActiveUrlIdsForUser(req.user!.id);
+    // ?all=true checks every user's URLs, same as the list. Admins only.
+    const user = req.user!;
+    const wantsAll = req.query.all === "true" || req.query.all === "1";
+    const urlIds = await getActiveUrlIds(user.id, { all: wantsAll && user.role === "ADMIN" });
 
     if (urlIds.length > 0) {
       await checkQueue.addBulk(

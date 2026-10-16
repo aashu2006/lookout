@@ -30,6 +30,15 @@ export class ApiError extends Error {
   }
 }
 
+/** What to show in a toast when a request fails. Validation errors carry their
+ * message in details, not in message. */
+export function errorMessage(err: unknown, fallback: string): string {
+  if (!(err instanceof ApiError)) {
+    return fallback;
+  }
+  return err.fieldMessages()[0] ?? err.message;
+}
+
 export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
 }

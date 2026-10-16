@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { Navigate, useLocation } from "react-router-dom";
-import { api, clearToken, getToken, setToken } from "../api/client";
+import { ApiError, api, clearToken, getToken, setToken } from "../api/client";
 import type { AuthResponse, User } from "../api/types";
 
 interface AuthContextValue {
@@ -14,6 +14,10 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
+// Enough retries to ride out a Render free tier cold start.
+const MAX_ME_ATTEMPTS = 10;
+const ME_RETRY_MS = 3000;
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
@@ -23,10 +27,40 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setLoading(false);
       return;
     }
-    api<{ user: User }>("/api/auth/me", { skipAuthRedirect: true })
-      .then((data) => setUser(data.user))
-      .catch(() => clearToken())
-      .finally(() => setLoading(false));
+
+    let cancelled = false;
+    let timer: number | undefined;
+
+    const loadUser = (attempt: number) => {
+      api<{ user: User }>("/api/auth/me", { skipAuthRedirect: true })
+        .then((data) => {
+          if (!cancelled) {
+            setUser(data.user);
+            setLoading(false);
+          }
+        })
+        .catch((err: unknown) => {
+          if (cancelled) {
+            return;
+          }
+          // Only a 401 means the token is bad. Anything else is probably the api
+          // waking up or a network blip, so keep the token and try again.
+          if (err instanceof ApiError && err.status === 401) {
+            clearToken();
+            setLoading(false);
+          } else if (attempt >= MAX_ME_ATTEMPTS) {
+            setLoading(false);
+          } else {
+            timer = window.setTimeout(() => loadUser(attempt + 1), ME_RETRY_MS);
+          }
+        });
+    };
+
+    loadUser(1);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
   }, []);
 
   const authenticate = useCallback(async (path: string, email: string, password: string) => {

@@ -12,7 +12,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { ApiError, api } from "../api/client";
+import { ApiError, api, errorMessage } from "../api/client";
 import type { Check, ManualCheckResponse, StatsWindow, Url, UrlStats } from "../api/types";
 import { useToast } from "../components/Toast";
 import { Button, Card, Spinner, StatusPill, displayStatus } from "../components/ui";
@@ -57,7 +57,7 @@ export function UrlDetail() {
       notify("success", "check" in result ? `Checked: ${result.check.status}` : "Check queued");
       refreshAll();
     } catch (err) {
-      notify("error", err instanceof ApiError ? err.message : "Check failed");
+      notify("error", errorMessage(err, "Check failed"));
     } finally {
       setChecking(false);
     }
@@ -72,7 +72,7 @@ export function UrlDetail() {
       notify("success", url.isActive ? "Paused" : "Resumed");
       refreshAll();
     } catch (err) {
-      notify("error", err instanceof ApiError ? err.message : "Update failed");
+      notify("error", errorMessage(err, "Update failed"));
     }
   };
 
@@ -85,11 +85,13 @@ export function UrlDetail() {
       notify("success", "Deleted");
       navigate("/", { replace: true });
     } catch (err) {
-      notify("error", err instanceof ApiError ? err.message : "Delete failed");
+      notify("error", errorMessage(err, "Delete failed"));
     }
   };
 
-  if (detail.error) {
+  // One failed poll shouldn't hide data we already have, unless the URL is gone.
+  const notFound = detail.error instanceof ApiError && detail.error.status === 404;
+  if (detail.error && (!detail.data || notFound)) {
     return (
       <div className="rounded-lg border border-gray-200 bg-white p-8 text-center">
         <p className="text-sm text-gray-700">This URL could not be loaded.</p>
@@ -240,7 +242,7 @@ export function UrlDetail() {
         </div>
       </div>
 
-      <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
+      <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white">
         <h2 className="border-b border-gray-200 px-4 py-3 text-sm font-medium text-gray-900">
           Recent checks
         </h2>
@@ -273,11 +275,8 @@ export function UrlDetail() {
                     {check.responseMs == null ? "—" : `${check.responseMs} ms`}
                   </td>
                   <td className="px-3 py-2 text-gray-700">{check.errorType ?? "—"}</td>
-                  <td
-                    className="max-w-xs truncate px-3 py-2 text-gray-500"
-                    title={check.errorMessage ?? ""}
-                  >
-                    {check.errorMessage ?? "—"}
+                  <td className="px-3 py-2 text-gray-500" title={check.errorMessage ?? ""}>
+                    <span className="block max-w-xs truncate">{check.errorMessage ?? "—"}</span>
                   </td>
                 </tr>
               ))}

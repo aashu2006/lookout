@@ -1,9 +1,10 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { Link } from "react-router-dom";
-import { ApiError, api } from "../api/client";
+import { api, errorMessage } from "../api/client";
 import type {
   BulkImportResult,
+  Check,
   ManualCheckResponse,
   Paginated,
   Summary,
@@ -35,9 +36,8 @@ export function Dashboard() {
   const [submitting, setSubmitting] = useState(false);
   const [bulkOpen, setBulkOpen] = useState(false);
   const [busyRow, setBusyRow] = useState<string | null>(null);
-  // Rows updated by "Check now" are overlaid on the polled list so a fresh
-  // result is visible immediately instead of after the next poll.
-  const [rowOverrides, setRowOverrides] = useState<Record<string, UrlListItem>>({});
+  // "Check now" results, shown right away until polling brings something newer.
+  const [freshChecks, setFreshChecks] = useState<Record<string, Check>>({});
 
   const allParam = showAll && user?.role === "ADMIN" ? "&all=true" : "";
 
@@ -54,7 +54,7 @@ export function Dashboard() {
   );
 
   const reload = useCallback(() => {
-    setRowOverrides({});
+    setFreshChecks({});
     list.refresh();
     summary.refresh();
   }, [list, summary]);
@@ -71,7 +71,7 @@ export function Dashboard() {
       setNewUrl("");
       reload();
     } catch (err) {
-      notify("error", err instanceof ApiError ? err.message : "Could not add URL");
+      notify("error", errorMessage(err, "Could not add URL"));
     } finally {
       setSubmitting(false);
     }
@@ -82,17 +82,14 @@ export function Dashboard() {
     try {
       const result = await api<ManualCheckResponse>(`/api/urls/${id}/check`, { method: "POST" });
       if ("check" in result) {
-        const row = rows.find((item) => item.id === id);
-        if (row) {
-          setRowOverrides((current) => ({ ...current, [id]: { ...row, lastCheck: result.check } }));
-        }
+        setFreshChecks((current) => ({ ...current, [id]: result.check }));
         notify("success", `Checked: ${result.check.status}`);
       } else {
         notify("success", result.message === "queued" ? "Check queued" : result.message);
       }
       summary.refresh();
     } catch (err) {
-      notify("error", err instanceof ApiError ? err.message : "Check failed");
+      notify("error", errorMessage(err, "Check failed"));
     } finally {
       setBusyRow(null);
     }
@@ -104,7 +101,7 @@ export function Dashboard() {
       notify("success", row.isActive ? "Paused" : "Resumed");
       reload();
     } catch (err) {
-      notify("error", err instanceof ApiError ? err.message : "Update failed");
+      notify("error", errorMessage(err, "Update failed"));
     }
   };
 
@@ -117,7 +114,7 @@ export function Dashboard() {
       notify("success", "Deleted");
       reload();
     } catch (err) {
-      notify("error", err instanceof ApiError ? err.message : "Delete failed");
+      notify("error", errorMessage(err, "Delete failed"));
     }
   };
 
@@ -126,7 +123,7 @@ export function Dashboard() {
       const result = await api<{ enqueued: number }>("/api/urls/check-all", { method: "POST" });
       notify("success", `queued ${result.enqueued} checks`);
     } catch (err) {
-      notify("error", err instanceof ApiError ? err.message : "Could not queue checks");
+      notify("error", errorMessage(err, "Could not queue checks"));
     }
   };
 
@@ -139,25 +136,40 @@ export function Dashboard() {
       notify("success", `Imported ${result.created.length} URLs`);
       reload();
     } catch (err) {
-      notify("error", err instanceof ApiError ? err.message : "Import failed");
+      notify("error", errorMessage(err, "Import failed"));
     }
   };
 
-  const rows = (list.data?.items ?? []).map((row) => rowOverrides[row.id] ?? row);
+  const rows = (list.data?.items ?? []).map((row) => {
+    const fresh = freshChecks[row.id];
+    const polledAt = row.lastCheck ? Date.parse(row.lastCheck.checkedAt) : 0;
+    return fresh && Date.parse(fresh.checkedAt) > polledAt ? { ...row, lastCheck: fresh } : row;
+  });
   const total = list.data?.total ?? 0;
   const lastPage = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const summaryData = summary.data;
 
+  // Deleting the last row on the last page leaves an empty page, so step back.
+  useEffect(() => {
+    if (list.data && list.data.items.length === 0 && page > lastPage) {
+      setPage(lastPage);
+    }
+  }, [list.data, page, lastPage]);
+
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
         <Card label="Total URLs" value={summaryData?.totalUrls ?? "—"} />
         <Card label="Up" value={summaryData?.up ?? "—"} />
         <Card label="Down" value={summaryData?.down ?? "—"} />
         <Card label="Pending" value={summaryData?.pending ?? "—"} />
         <Card
+          label="Paused"
+          value={summaryData ? summaryData.totalUrls - summaryData.activeUrls : "—"}
+        />
+        <Card
           label="Uptime 24h"
-          value={summaryData?.uptimePct24h === null ? "—" : `${summaryData?.uptimePct24h ?? "—"}%`}
+          value={summaryData?.uptimePct24h == null ? "—" : `${summaryData.uptimePct24h}%`}
           subtitle={
             summaryData ? `${summaryData.failures24h} failures in the last 24h` : undefined
           }
@@ -212,8 +224,15 @@ export function Dashboard() {
         </form>
       </div>
 
-      <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
-        {list.loading && rows.length === 0 ? (
+      <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white">
+        {list.error && !list.data ? (
+          <div className="p-8 text-center">
+            <p className="text-sm text-gray-700">Couldn&apos;t load your URLs.</p>
+            <div className="mt-3">
+              <Button onClick={list.refresh}>Try again</Button>
+            </div>
+          </div>
+        ) : !list.data || (rows.length === 0 && total > 0) ? (
           <div className="p-8 text-center text-sm text-gray-500">Loading…</div>
         ) : rows.length === 0 ? (
           <div className="p-10 text-center">
@@ -247,10 +266,10 @@ export function Dashboard() {
                   <td className="px-3 py-2">
                     <StatusPill status={displayStatus(row)} />
                   </td>
-                  <td className="max-w-xs truncate px-3 py-2">
+                  <td className="px-3 py-2">
                     <Link
                       to={`/urls/${row.id}`}
-                      className="text-indigo-600 hover:underline"
+                      className="block max-w-xs truncate text-indigo-600 hover:underline"
                       title={row.url}
                     >
                       {row.url}
@@ -372,6 +391,10 @@ function BulkImportModal({
       notify("error", "Enter at least one URL");
       return;
     }
+    if (urls.length > 100) {
+      notify("error", `That's ${urls.length} URLs, the limit is 100 at a time`);
+      return;
+    }
 
     setSubmitting(true);
     try {
@@ -379,7 +402,7 @@ function BulkImportModal({
       setResult(data);
       notify("success", `Imported ${data.created.length}, skipped ${data.skipped.length}`);
     } catch (err) {
-      notify("error", err instanceof ApiError ? err.message : "Import failed");
+      notify("error", errorMessage(err, "Import failed"));
     } finally {
       setSubmitting(false);
     }

@@ -151,7 +151,8 @@ export async function getSummary(
     prisma.url.count({ where: { ...urlWhere, isActive: true } }),
     // Latest check per URL. LATERAL + LIMIT 1 is one index seek per URL, way
     // faster than DISTINCT ON, which reads every check for those URLs.
-    // A URL with no checks yet comes back with a NULL status.
+    // A URL with no checks yet comes back with a NULL status. Paused URLs are
+    // left out so up/down/pending match what the table shows.
     prisma.$queryRaw<{ status: "UP" | "DOWN" | null }[]>`
       SELECT latest.status
       FROM urls u
@@ -162,7 +163,7 @@ export async function getSummary(
         ORDER BY c.checked_at DESC
         LIMIT 1
       ) latest ON TRUE
-      WHERE ${scope}
+      WHERE ${scope} AND u.is_active
     `,
     prisma.$queryRaw<AggregateRow[]>`
       SELECT
